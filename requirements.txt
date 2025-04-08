@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+watchdog
+sentence-transformers
+lancedb
+python-dotenv
+pydantic
