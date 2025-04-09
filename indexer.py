@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 import lancedb
 from lancedb.pydantic import pydantic_to_schema
 import sentence_transformers
-from mcp_server import IndexedDocument, Settings
+from models import IndexedDocument, Settings
 
 class Indexer:
     def __init__(self, settings: Settings):
@@ -13,7 +13,7 @@ class Indexer:
         schema = pydantic_to_schema(IndexedDocument)
         try:
             self.table = self.db.open_table("documents")
-        except FileNotFoundError:
+        except ValueError:
             self.table = self.db.create_table("documents", schema=schema)
 
     def generate_embedding(self, text: str) -> List[float]:

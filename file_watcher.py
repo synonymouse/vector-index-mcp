@@ -2,13 +2,14 @@ import os
 import time
 import hashlib
 import logging
+import json
 from pathlib import Path
 from typing import List, Set, Dict, Any
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from indexer import Indexer
-from mcp_server import IndexedDocument
+from models import IndexedDocument
 
 
 class FileWatcher:
@@ -62,13 +63,21 @@ class FileWatcher:
                         'last_modified': last_modified
                     }
                     
-                    with open(file_path, 'r', encoding='utf-8') as f:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
                         content = f.read()
-                    
+
+                    # Prepare metadata and serialize
+                    metadata_dict = {'original_path': file_path}
+                    metadata_json_str = json.dumps(metadata_dict)
+
                     document = IndexedDocument(
-                        document_id=file_path,
-                        content=content,
-                        metadata={'path': file_path}
+                        document_id=file_path, # Use file_path as unique ID
+                        file_path=file_path,
+                        content_hash=file_hash,
+                        last_modified_timestamp=last_modified,
+                        extracted_text_chunk=content, # Use correct field name
+                        metadata_json=metadata_json_str # Use serialized metadata
+                        # Vector will be added by indexer if needed
                     )
                     self.indexer.add_or_update_document(document)
                     logging.info(f"Indexed file: {file_path}")
@@ -87,13 +96,20 @@ class FileWatcher:
                 'last_modified': last_modified
             }
             
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
                 content = f.read()
-            
+
+            # Prepare metadata and serialize
+            metadata_dict = {'original_path': file_path}
+            metadata_json_str = json.dumps(metadata_dict)
+
             document = IndexedDocument(
                 document_id=file_path,
-                content=content,
-                metadata={'path': file_path}
+                file_path=file_path,
+                content_hash=file_hash,
+                last_modified_timestamp=last_modified,
+                extracted_text_chunk=content, # Use correct field name
+                metadata_json=metadata_json_str # Use serialized metadata
             )
             self.indexer.add_or_update_document(document)
             logging.info(f"Indexed new file: {file_path}")
@@ -112,13 +128,20 @@ class FileWatcher:
            current_modified != self.known_files[file_path]['last_modified']:
             
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
                     content = f.read()
-                
+
+                # Prepare metadata and serialize
+                metadata_dict = {'original_path': file_path}
+                metadata_json_str = json.dumps(metadata_dict)
+
                 document = IndexedDocument(
                     document_id=file_path,
-                    content=content,
-                    metadata={'path': file_path}
+                    file_path=file_path,
+                    content_hash=current_hash, # Use current_hash
+                    last_modified_timestamp=current_modified, # Use current_modified
+                    extracted_text_chunk=content, # Use correct field name
+                    metadata_json=metadata_json_str # Use serialized metadata
                 )
                 self.indexer.add_or_update_document(document)
                 self.known_files[file_path] = {

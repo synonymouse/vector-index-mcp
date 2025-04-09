@@ -2,6 +2,9 @@ fastapi
 uvicorn[standard]
 watchdog
 sentence-transformers
+transformers
 lancedb
 python-dotenv
 pydantic
+pydantic-settings
+pandas

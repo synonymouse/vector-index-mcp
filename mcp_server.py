@@ -1,39 +1,37 @@
 import os
 import threading
+import json # <-- Add json import
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, BaseSettings
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 from fastapi import FastAPI
 from indexer import Indexer
 from file_watcher import FileWatcher
+from models import IndexedDocument, Settings
 
 app = FastAPI()
 
 # Load environment variables
 load_dotenv()
 
-class IndexedDocument(BaseModel):
-    document_id: str
-    file_path: str
-    content_hash: str
-    last_modified_timestamp: float
-    extracted_text_chunk: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    vector: List[float] = []
-
-class Settings(BaseSettings):
-    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
-    lancedb_uri: str = os.getenv("LANCEDB_URI", "./.lancedb")
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    project_path: str = os.getenv("PROJECT_PATH", ".")
-    ignore_patterns: List[str] = os.getenv("IGNORE_PATTERNS", ".git,__pycache__,*.pyc").split(",")
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
 
+# Define a model for the search result item in the API response
+class SearchResultItem(BaseModel):
+   document_id: str
+   file_path: str
+   content_hash: str
+   last_modified_timestamp: float
+   extracted_text_chunk: str
+   metadata: Dict[str, Any] # Parsed metadata
+   vector: List[float] = [] # Keep vector if needed in response
+
 class SearchResponse(BaseModel):
-    results: List[IndexedDocument]
+    results: List[SearchResultItem] # Use the new response item model
 
 @app.get("/")
 async def root():
@@ -72,11 +70,36 @@ class MCPServer:
 @app.post("/search", response_model=SearchResponse)
 async def search_documents(request: SearchRequest):
     try:
-        search_results = mcp_server_instance.indexer.search(
+        # Get raw results (List[IndexedDocument]) from indexer
+        raw_results = mcp_server_instance.indexer.search(
             query_text=request.query,
             top_k=request.top_k
         )
-        return SearchResponse(results=search_results)
+
+        # Process results for API response
+        processed_results: List[SearchResultItem] = []
+        for doc in raw_results:
+            try:
+                # Parse the metadata JSON string
+                parsed_metadata = json.loads(doc.metadata_json)
+            except json.JSONDecodeError:
+                # Handle cases where metadata might be invalid JSON
+                parsed_metadata = {"error": "invalid metadata format"}
+
+            # Create the response item, copying fields and adding parsed metadata
+            processed_results.append(
+                SearchResultItem(
+                    document_id=doc.document_id,
+                    file_path=doc.file_path,
+                    content_hash=doc.content_hash,
+                    last_modified_timestamp=doc.last_modified_timestamp,
+                    extracted_text_chunk=doc.extracted_text_chunk,
+                    metadata=parsed_metadata, # Use the parsed dict
+                    vector=doc.vector
+                )
+            )
+
+        return SearchResponse(results=processed_results)
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(
