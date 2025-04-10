@@ -4,14 +4,17 @@ import os
 import json # Import json for potential default serialization if needed
 
 class IndexedDocument(BaseModel):
-    document_id: str
-    file_path: str
-    content_hash: str
-    last_modified_timestamp: float
-    extracted_text_chunk: str
+    # Unique ID for the chunk, e.g., "path/to/file.txt::0"
+    document_id: str = Field(..., description="Unique identifier for the document chunk")
+    file_path: str = Field(..., description="Path to the original file")
+    content_hash: str = Field(..., description="Hash of the original file's content")
+    last_modified_timestamp: float = Field(..., description="Last modified timestamp of the original file")
+    chunk_index: int = Field(..., description="Index of this chunk within the file")
+    total_chunks: int = Field(..., description="Total number of chunks for the file")
+    extracted_text_chunk: str = Field(..., description="The actual text content of this chunk")
     # Store metadata as a JSON string in the model intended for LanceDB
-    metadata_json: str = Field(default="{}")
-    vector: List[float] = []
+    metadata_json: str = Field(default="{}", description="JSON string representation of metadata")
+    vector: List[float] = Field(default=[], description="Embedding vector for the chunk")
 
     # Keep the original metadata dict for internal processing if needed,
     # but it won't be part of the LanceDB schema directly.

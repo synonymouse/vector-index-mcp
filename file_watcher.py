@@ -10,6 +10,7 @@ from watchdog.events import FileSystemEventHandler
 
 from indexer import Indexer
 from models import IndexedDocument
+from content_extractor import chunk_content # Import the chunking function
 
 
 class FileWatcher:
@@ -48,118 +49,130 @@ class FileWatcher:
                 return True
         return False
     
+    def _process_and_index_file(self, file_path: str) -> bool:
+        """Reads, chunks, and indexes a single file. Updates known_files."""
+        try:
+            file_hash = self._calculate_hash(file_path)
+            last_modified = self._get_last_modified(file_path)
+
+            if not file_hash: # Skip if hash calculation failed
+                return False
+
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            chunks = chunk_content(content)
+            total_chunks = len(chunks)
+
+            if total_chunks == 0:
+                logging.info(f"Skipping empty or unchunkable file: {file_path}")
+                # Even if empty, record its hash/mtime to avoid reprocessing if unchanged
+                self.known_files[file_path] = {'hash': file_hash, 'last_modified': last_modified}
+                # Ensure any previous index entries are removed if the file became empty
+                self.indexer.remove_document(file_path)
+                return True # Processed successfully (by removing/ignoring)
+
+            # Prepare base metadata (can be extended per chunk if needed)
+            metadata_dict = {'original_path': file_path}
+            metadata_json_str = json.dumps(metadata_dict)
+
+            for i, chunk_text in enumerate(chunks):
+                chunk_doc_id = f"{file_path}::{i}"
+                document = IndexedDocument(
+                    document_id=chunk_doc_id,
+                    file_path=file_path,
+                    content_hash=file_hash, # Hash of the original file
+                    last_modified_timestamp=last_modified, # mtime of the original file
+                    chunk_index=i,
+                    total_chunks=total_chunks,
+                    extracted_text_chunk=chunk_text,
+                    metadata_json=metadata_json_str
+                    # Vector will be added by indexer
+                )
+                self.indexer.add_or_update_document(document)
+
+            # Update known files only after successful processing of all chunks
+            self.known_files[file_path] = {
+                'hash': file_hash,
+                'last_modified': last_modified
+            }
+            logging.info(f"Indexed {total_chunks} chunks for file: {file_path}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error processing file {file_path}: {e}")
+            return False
+
     def initial_scan(self):
+        logging.info("Starting initial project scan...")
+        processed_files = 0
         for root, _, files in os.walk(self.project_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 if self._should_ignore(file_path):
                     continue
-                
-                try:
-                    file_hash = self._calculate_hash(file_path)
-                    last_modified = self._get_last_modified(file_path)
-                    self.known_files[file_path] = {
-                        'hash': file_hash,
-                        'last_modified': last_modified
-                    }
-                    
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
-                        content = f.read()
-
-                    # Prepare metadata and serialize
-                    metadata_dict = {'original_path': file_path}
-                    metadata_json_str = json.dumps(metadata_dict)
-
-                    document = IndexedDocument(
-                        document_id=file_path, # Use file_path as unique ID
-                        file_path=file_path,
-                        content_hash=file_hash,
-                        last_modified_timestamp=last_modified,
-                        extracted_text_chunk=content, # Use correct field name
-                        metadata_json=metadata_json_str # Use serialized metadata
-                        # Vector will be added by indexer if needed
-                    )
-                    self.indexer.add_or_update_document(document)
-                    logging.info(f"Indexed file: {file_path}")
-                except Exception as e:
-                    logging.error(f"Error processing file {file_path} during initial scan: {e}")
+                if self._process_and_index_file(file_path):
+                    processed_files += 1
+        logging.info(f"Initial scan complete. Processed {processed_files} files.")
     
     def process_creation(self, file_path: str):
         if self._should_ignore(file_path):
             return
-        
-        try:
-            file_hash = self._calculate_hash(file_path)
-            last_modified = self._get_last_modified(file_path)
-            self.known_files[file_path] = {
-                'hash': file_hash,
-                'last_modified': last_modified
-            }
-            
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
-                content = f.read()
-
-            # Prepare metadata and serialize
-            metadata_dict = {'original_path': file_path}
-            metadata_json_str = json.dumps(metadata_dict)
-
-            document = IndexedDocument(
-                document_id=file_path,
-                file_path=file_path,
-                content_hash=file_hash,
-                last_modified_timestamp=last_modified,
-                extracted_text_chunk=content, # Use correct field name
-                metadata_json=metadata_json_str # Use serialized metadata
-            )
-            self.indexer.add_or_update_document(document)
-            logging.info(f"Indexed new file: {file_path}")
-        except Exception as e:
-            logging.error(f"Error processing created file {file_path}: {e}")
+        logging.debug(f"Processing creation: {file_path}")
+        self._process_and_index_file(file_path)
     
     def process_modification(self, file_path: str):
         if self._should_ignore(file_path):
             return
-        
+
+        logging.debug(f"Processing modification: {file_path}")
         current_hash = self._calculate_hash(file_path)
         current_modified = self._get_last_modified(file_path)
-        
-        if file_path not in self.known_files or \
-           current_hash != self.known_files[file_path]['hash'] or \
-           current_modified != self.known_files[file_path]['last_modified']:
-            
+
+        known_info = self.known_files.get(file_path)
+
+        # Check if the file is known and if hash or modification time has changed
+        needs_update = False
+        if not known_info:
+            needs_update = True # File wasn't known before (edge case, treat as creation)
+            logging.warning(f"Modified event for unknown file: {file_path}. Processing as new.")
+        elif current_hash != known_info['hash'] or current_modified != known_info['last_modified']:
+            needs_update = True
+        # Add check for hash calculation failure
+        elif not current_hash:
+             logging.error(f"Hash calculation failed for modified file {file_path}. Skipping update.")
+             needs_update = False # Cannot proceed without hash
+
+        if needs_update:
+            logging.info(f"Detected change in {file_path}. Re-indexing...")
             try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f: # Added errors='ignore'
-                    content = f.read()
+                # Remove all existing chunks for this file first
+                self.indexer.remove_document(file_path)
+                logging.debug(f"Removed old chunks for {file_path}")
 
-                # Prepare metadata and serialize
-                metadata_dict = {'original_path': file_path}
-                metadata_json_str = json.dumps(metadata_dict)
+                # Process and index the new content
+                self._process_and_index_file(file_path)
+                # Note: _process_and_index_file updates self.known_files on success
 
-                document = IndexedDocument(
-                    document_id=file_path,
-                    file_path=file_path,
-                    content_hash=current_hash, # Use current_hash
-                    last_modified_timestamp=current_modified, # Use current_modified
-                    extracted_text_chunk=content, # Use correct field name
-                    metadata_json=metadata_json_str # Use serialized metadata
-                )
-                self.indexer.add_or_update_document(document)
-                self.known_files[file_path] = {
-                    'hash': current_hash,
-                    'last_modified': current_modified
-                }
-                logging.info(f"Updated indexed file: {file_path}")
             except Exception as e:
-                logging.error(f"Error processing modified file {file_path}: {e}")
+                # Catch potential errors during removal or re-indexing
+                logging.error(f"Error during re-indexing of modified file {file_path}: {e}")
+        else:
+            logging.debug(f"No significant change detected for {file_path}. Skipping.")
     
     def process_deletion(self, file_path: str):
+        # No need to check _should_ignore here, if it was indexed, we should remove it.
         if file_path in self.known_files:
+            logging.debug(f"Processing deletion: {file_path}")
             try:
+                # The indexer's remove_document should handle removing all chunks
                 self.indexer.remove_document(file_path)
                 del self.known_files[file_path]
-                logging.info(f"Removed indexed file: {file_path}")
+                logging.info(f"Removed index entries for deleted file: {file_path}")
             except Exception as e:
-                logging.error(f"Error processing deleted file {file_path}: {e}")
+                logging.error(f"Error removing index entries for deleted file {file_path}: {e}")
+        else:
+            logging.debug(f"Deletion event for untracked file: {file_path}")
     
     def start(self):
         self.observer.schedule(
@@ -180,17 +193,19 @@ class ProjectEventHandler(FileSystemEventHandler):
     
     def on_created(self, event):
         if not event.is_directory:
-            self.file_watcher.process_creation(event.src_path)
+            self.file_watcher.process_creation(event.src_path) # Handles creation and initial indexing
     
     def on_modified(self, event):
         if not event.is_directory:
-            self.file_watcher.process_modification(event.src_path)
+            self.file_watcher.process_modification(event.src_path) # Handles updates/re-indexing
     
     def on_deleted(self, event):
         if not event.is_directory:
-            self.file_watcher.process_deletion(event.src_path)
+            self.file_watcher.process_deletion(event.src_path) # Handles removal from index
     
     def on_moved(self, event):
         if not event.is_directory:
+            # Treat move as deletion of old path and creation of new path
+            logging.debug(f"Processing move: {event.src_path} -> {event.dest_path}")
             self.file_watcher.process_deletion(event.src_path)
             self.file_watcher.process_creation(event.dest_path)

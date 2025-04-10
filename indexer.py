@@ -20,14 +20,35 @@ class Indexer:
         return self.model.encode(text).tolist()
 
     def add_or_update_document(self, doc: IndexedDocument):
-        # TODO: Implement robust upsert logic
-        # Simple add for now:
+        """Adds or updates a single document chunk in the index.
+        Assumes that the document_id is unique per chunk.
+        Relies on file_watcher to remove old chunks before adding updated ones.
+        """
+        # Ensure vector exists for the chunk's text
         if not doc.vector:
-            doc.vector = self.generate_embedding(doc.text)
-        self.table.add([doc.dict()])
+            # Use the actual chunk content for embedding
+            doc.vector = self.generate_embedding(doc.extracted_text_chunk)
 
-    def remove_document(self, document_id: str):
-        self.table.delete(f'document_id = "{document_id}"')
+        # LanceDB's add can often act as upsert if IDs match, but explicit
+        # removal in file_watcher for modifications is safer.
+        # We use dict() for compatibility with LanceDB add method.
+        try:
+            self.table.add([doc.dict()])
+        except Exception as e:
+            # Log or handle specific LanceDB errors if necessary
+            print(f"Error adding document chunk {doc.document_id}: {e}") # Using print for visibility, replace with logging
+            # Consider re-raising or specific error handling
+
+    def remove_document(self, file_path: str):
+        """Removes all document chunks associated with a given file_path."""
+        try:
+            # Use the file_path field to delete all related chunks
+            where_clause = f"file_path = '{file_path}'"
+            self.table.delete(where_clause)
+            print(f"Deleted chunks for file: {file_path}") # Replace with logging
+        except Exception as e:
+            print(f"Error deleting chunks for file {file_path}: {e}") # Replace with logging
+            # Consider re-raising or specific error handling
 
     def search(self, query_text: str, top_k: int = 5) -> List[IndexedDocument]:
         """Search for documents semantically similar to the query text.
