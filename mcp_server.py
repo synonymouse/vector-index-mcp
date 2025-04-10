@@ -7,6 +7,7 @@ import json # <-- Keep json import
 import threading # <-- Keep threading import
 from typing import List, Dict, Any, Optional # <-- Add Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException # <-- Add BackgroundTasks, HTTPException
+from pathlib import Path # <-- Add Path import
 from dotenv import load_dotenv
 from pydantic import BaseModel # Keep BaseModel for SearchRequest
 from pydantic_settings import BaseSettings
@@ -181,8 +182,11 @@ async def get_indexing_status(project_path: str):
     defined in the server's settings. Returns 'Not Found' status for other paths.
     """
     # URL decode might be needed if paths have special chars, FastAPI handles :path well
+    # Normalize both paths for robust comparison
+    requested_path_norm = Path(project_path).resolve()
+    server_path_norm = Path(mcp_server_instance.project_path).resolve()
     # Check if the requested path matches the server's configured path
-    if project_path != mcp_server_instance.project_path:
+    if requested_path_norm != server_path_norm:
         return IndexingStatusResponse(
             project_path=project_path,
             status="Not Found",
@@ -238,26 +242,24 @@ async def search_documents(request: SearchRequest):
         for doc in raw_results:
             try:
                 # Parse the metadata JSON string if it exists and is valid
-                # Assuming metadata_json is the field name in IndexedDocument
-                parsed_metadata = json.loads(doc.metadata_json) if doc.metadata_json else {}
+                # Use dictionary access for mocked results
+                metadata_json = doc.get('metadata_json') # Use .get for safety
+                parsed_metadata = json.loads(metadata_json) if metadata_json else {}
             except (json.JSONDecodeError, TypeError):
                  # Handle cases where metadata might be invalid JSON or None
                 parsed_metadata = {"error": "invalid or missing metadata format"}
-            except AttributeError:
-                 # Handle if metadata_json field doesn't exist on the model instance
-                 parsed_metadata = {"error": "metadata_json field missing"}
 
 
             # Create the response item, copying fields and adding parsed metadata
             processed_results.append(
                 SearchResultItem(
-                    document_id=doc.document_id,
-                    file_path=doc.file_path,
-                    content_hash=doc.content_hash,
-                    last_modified_timestamp=doc.last_modified_timestamp,
-                    extracted_text_chunk=doc.extracted_text_chunk,
-                    metadata=parsed_metadata, # Use the parsed dict
-                    vector=doc.vector # Assuming vector is part of IndexedDocument
+                    document_id=doc.get('document_id'), # Use .get for safety
+                    file_path=doc.get('file_path'),
+                    content_hash=doc.get('content_hash'),
+                    last_modified_timestamp=doc.get('last_modified_timestamp'),
+                    extracted_text_chunk=doc.get('extracted_text_chunk'),
+                    metadata=parsed_metadata,
+                    vector=doc.get('vector') # Use .get for safety
                 )
             )
 

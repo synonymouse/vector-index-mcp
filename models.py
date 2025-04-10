@@ -1,4 +1,4 @@
-from typing import List, Dict, Any # Keep Any for internal use before serialization
+from typing import List, Dict, Any, Optional # Keep Any for internal use before serialization
 from pydantic import BaseModel, Field
 import os
 import json # Import json for potential default serialization if needed
@@ -45,3 +45,22 @@ class IndexingStatusResponse(BaseModel):
     last_scan_end_time: Optional[float] = Field(default=None, description="Timestamp (UTC epoch seconds) when the last scan finished")
     indexed_chunk_count: Optional[int] = Field(default=None, description="Number of document chunks currently indexed for the path")
     error_message: Optional[str] = Field(default=None, description="Details if the status is 'Error'")
+
+class SearchRequest(BaseModel):
+    """Request body for the /search endpoint."""
+    query: str = Field(..., description="The search query text")
+    top_k: int = Field(default=5, description="Number of top results to return")
+
+class SearchResultItem(BaseModel):
+    """Represents a single search result item returned by the API."""
+    document_id: str = Field(..., description="Unique identifier for the document chunk")
+    file_path: str = Field(..., description="Path to the original file")
+    content_hash: str = Field(..., description="Hash of the original file's content")
+    last_modified_timestamp: float = Field(..., description="Last modified timestamp of the original file")
+    extracted_text_chunk: str = Field(..., description="The text content of the matching chunk")
+    metadata: Dict[str, Any] = Field(default={}, description="Metadata associated with the file/chunk")
+    vector: List[float] = Field(default=[], description="Embedding vector for the chunk (optional)") # Or remove if not needed in response
+
+class SearchResponse(BaseModel):
+    """Response body for the /search endpoint."""
+    results: List[SearchResultItem] = Field(..., description="List of search result items")
