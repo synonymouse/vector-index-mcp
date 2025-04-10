@@ -2,7 +2,6 @@ import tiktoken
 from typing import List
 
 # Using cl100k_base encoding, common for OpenAI models
-# Use try-except to handle potential errors if encoding is not found
 try:
     encoding = tiktoken.get_encoding("cl100k_base")
 except Exception:
@@ -10,11 +9,14 @@ except Exception:
     try:
         encoding = tiktoken.get_encoding("p50k_base")
     except Exception:
-        print("Error: Neither cl100k_base nor p50k_base encoding found. Using basic character split.")
-        encoding = None # Fallback handled in chunk_content
+        print(
+            "Error: Neither cl100k_base nor p50k_base encoding found. Using basic character split."
+        )
+        encoding = None
 
 DEFAULT_CHUNK_SIZE = 512
 DEFAULT_OVERLAP = 128
+
 
 def chunk_content(
     content: str,
@@ -53,21 +55,23 @@ def chunk_content(
                 next_start_idx = start_idx + chunk_size - overlap
                 # Ensure we make progress, especially if overlap is large or chunk_size is small
                 if next_start_idx <= start_idx:
-                     next_start_idx = start_idx + 1 # Force minimal progress
+                    next_start_idx = start_idx + 1  # Force minimal progress
 
                 start_idx = next_start_idx
 
             # Handle edge case where the last chunk might be empty if overlap logic pushes start_idx beyond len(tokens)
-            if not chunks and content: # If no chunks were created but content exists (e.g., content shorter than overlap)
-                 chunks.append(content) # Add the whole content as one chunk
+            if (
+                not chunks and content
+            ):  # If no chunks were created but content exists (e.g., content shorter than overlap)
+                chunks.append(content)  # Add the whole content as one chunk
 
             return chunks
 
         except Exception as e:
-            print(f"Warning: Tokenization/decoding failed ({e}). Falling back to character split.")
-            # Fall through to character-based splitting
+            print(
+                f"Warning: Tokenization/decoding failed ({e}). Falling back to character split."
+            )
 
-    # Fallback to character-based splitting if tiktoken fails or encoding is unavailable
     char_chunks = []
     start_idx = 0
     # Adjust chunk_size and overlap for characters (approximate)
@@ -80,7 +84,7 @@ def chunk_content(
         char_chunks.append(content[start_idx:end_idx])
         next_start_idx = start_idx + char_chunk_size - char_overlap
         if next_start_idx <= start_idx:
-            next_start_idx = start_idx + 1 # Force minimal progress
+            next_start_idx = start_idx + 1  # Force minimal progress
         start_idx = next_start_idx
 
     if not char_chunks and content:

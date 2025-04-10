@@ -1,18 +1,19 @@
 import os
 import logging
-from typing import List, Dict, Any # Keep Any for internal use before serialization
+from typing import List, Dict, Any
 import lancedb
-import pyarrow as pa # Import pyarrow for type checking
-# Ensure numpy is imported, assuming it's a dependency (likely via sentence-transformers or lancedb)
-# If not explicitly listed in requirements.txt, it should be added.
+import pyarrow as pa
 import numpy as np
-import sentence_transformers # Ensure sentence_transformers is imported
-# from lancedb.pydantic import pydantic_to_schema # No longer needed as schema is inferred
-from models import IndexedDocument, Settings # Assuming models.py contains the Pydantic models
+import sentence_transformers
+from models import (
+    IndexedDocument,
+    Settings,
+)
 
-# Basic logging setup (Consider moving to a dedicated logging config if complexity grows)
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
-                    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+)
 log = logging.getLogger(__name__)
 
 
@@ -21,22 +22,29 @@ class Indexer:
         self.settings = settings
         log.info(f"Initializing Indexer with settings: {settings}")
         try:
-            # Consider adding error handling for model loading (e.g., model not found)
-            self.model = sentence_transformers.SentenceTransformer(settings.embedding_model_name)
+            self.model = sentence_transformers.SentenceTransformer(
+                settings.embedding_model_name
+            )
             log.info(f"Loaded embedding model: {settings.embedding_model_name}")
         except Exception as e:
-            log.error(f"Failed to load sentence transformer model '{settings.embedding_model_name}': {e}", exc_info=True)
-            raise # Re-raise critical error
+            log.error(
+                f"Failed to load sentence transformer model '{settings.embedding_model_name}': {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise critical error
 
         try:
             self.db = lancedb.connect(settings.lancedb_uri)
             log.info(f"Connected to LanceDB at URI: {settings.lancedb_uri}")
         except Exception as e:
-            log.error(f"Failed to connect to LanceDB at '{settings.lancedb_uri}': {e}", exc_info=True)
-            raise # Re-raise critical error
+            log.error(
+                f"Failed to connect to LanceDB at '{settings.lancedb_uri}': {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise critical error
 
-        self.table_name = "documents" # Define table name once
-
+        self.table_name = "documents"
+ 
         # --- Schema Definition and Table Creation ---
         # Schema is now inferred directly from the IndexedDocument LanceModel.
         # LanceDB handles schema creation/validation when using LanceModel.
@@ -49,82 +57,100 @@ class Indexer:
             log.info(f"Opened existing table '{self.table_name}'.")
             # Optional: Add a check here if needed, comparing self.table.schema with IndexedDocument.schema()
             # For now, rely on LanceDB's handling during operations.
-            # Example check (can be verbose):
-            # if self.table.schema != IndexedDocument.schema():
-            #     log.warning(f"Schema mismatch for table '{self.table_name}'. Expected: {IndexedDocument.schema()}, Found: {self.table.schema}. Recreating.")
-            #     raise ValueError("Schema mismatch") # Trigger recreation below
-
-        except (FileNotFoundError, ValueError, pa.lib.ArrowIOError) as e: # Catch relevant errors (ValueError covers table not found)
-            log.warning(f"Table '{self.table_name}' not found or schema potentially incompatible ({type(e).__name__}: {e}). Attempting to create/recreate.")
+        except (
+            FileNotFoundError,
+            ValueError,
+            pa.lib.ArrowIOError,
+        ) as e:  # Catch relevant errors (ValueError covers table not found)
+            log.warning(
+                f"Table '{self.table_name}' not found or schema potentially incompatible ({type(e).__name__}: {e}). Attempting to create/recreate."
+            )
             try:
                 # If the error suggests incompatibility (e.g., ValueError from a manual check above, or certain ArrowIOErrors),
                 # explicitly drop before creating. Otherwise, create_table with schema handles it.
-                if isinstance(e, ValueError): # Or other specific incompatibility indicators
-                     try:
-                         self.db.drop_table(self.table_name)
-                         log.info(f"Dropped potentially incompatible table '{self.table_name}' before recreating.")
-                     except Exception as drop_e:
-                         # Log warning but proceed, create_table might still work or fail clearly
-                         log.warning(f"Failed to explicitly drop table '{self.table_name}' before recreation: {drop_e}")
+                if isinstance(
+                    e, ValueError
+                ):  # Or other specific incompatibility indicators
+                    try:
+                        self.db.drop_table(self.table_name)
+                        log.info(
+                            f"Dropped potentially incompatible table '{self.table_name}' before recreating."
+                        )
+                    except Exception as drop_e:
+                        # Log warning but proceed, create_table might still work or fail clearly
+                        log.warning(
+                            f"Failed to explicitly drop table '{self.table_name}' before recreation: {drop_e}"
+                        )
 
                 # Create table using the LanceModel schema. mode="create" prevents overwriting existing compatible tables.
                 # LanceDB will raise an error if the table exists but the schema doesn't match IndexedDocument.
-                self.table = self.db.create_table(self.table_name, schema=IndexedDocument, mode="create")
-                log.info(f"Created new table '{self.table_name}' using schema from IndexedDocument model.")
+                self.table = self.db.create_table(
+                    self.table_name, schema=IndexedDocument, mode="create"
+                )
+                log.info(
+                    f"Created new table '{self.table_name}' using schema from IndexedDocument model."
+                )
                 # Index creation should happen later, once data exists.
-                # self.create_vector_index() # Removed immediate index creation
-                # Index creation removed from here. It should be triggered separately.
+                # Index creation should be triggered separately after data is added or when needed.
             except Exception as ce:
-                 log.error(f"Failed to create table '{self.table_name}' or initial index: {ce}", exc_info=True)
-                 raise # Re-raise the exception to indicate critical failure
+                log.error(
+                    f"Failed to create table '{self.table_name}' or initial index: {ce}",
+                    exc_info=True,
+                )
+                raise  # Re-raise the exception to indicate critical failure
 
         # --- Ensure Vector Index Exists (Optional but Recommended) ---
         # This might be redundant if index creation is robustly handled in the creation block,
         # but can serve as a check or attempt to create if missed.
-        # self.create_vector_index()
-
+        # self.create_vector_index() # Consider calling this explicitly after initial scan or periodically.
 
     def create_vector_index(self, replace=False):
         """Creates the vector index on the table."""
         try:
-            log.info(f"Attempting to create vector index on '{self.table_name}' (replace={replace})...")
+            log.info(
+                f"Attempting to create vector index on '{self.table_name}' (replace={replace})..."
+            )
             # Configure index parameters if needed (e.g., num_partitions, num_sub_vectors)
             # Example: self.table.create_index(vector_column_name="vector", replace=replace, metric="cosine", num_partitions=256, num_sub_vectors=96)
-            self.table.create_index(vector_column_name="vector", replace=replace) # Use defaults or add config
-            log.info(f"Successfully created/verified vector index on '{self.table_name}'.")
+            self.table.create_index(
+                vector_column_name="vector", replace=replace
+            )
+            log.info(
+                f"Successfully created/verified vector index on '{self.table_name}'."
+            )
         except Exception as index_e:
-            log.error(f"Failed to create vector index on table '{self.table_name}': {index_e}", exc_info=True)
-            # Decide if this is critical. If search relies on it, maybe raise.
-            # raise index_e
+            log.error(
+                f"Failed to create vector index on table '{self.table_name}': {index_e}",
+                exc_info=True,
+            )
 
-
-    def generate_embedding(self, text: str) -> np.ndarray: # Return numpy array for efficiency
+    def generate_embedding(
+        self, text: str
+    ) -> np.ndarray:  # Return numpy array for efficiency
         """Generates a vector embedding for the given text, ensuring it's float32."""
         try:
-            # Encode the text using the SentenceTransformer model
-            # normalize_embeddings=True is recommended for cosine similarity search
             embedding = self.model.encode(text, normalize_embeddings=True)
-            # Ensure the embedding is a NumPy array of float32
             return embedding.astype(np.float32)
         except Exception as e:
-            log.error(f"Failed to generate embedding for text snippet: {text[:100]}... Error: {e}", exc_info=True)
-            # Return an empty array or raise? Depends on how caller handles it.
-            # Returning empty might lead to data inconsistencies. Raising is safer.
-            raise
+            log.error(
+                f"Failed to generate embedding for text snippet: {text[:100]}... Error: {e}",
+                exc_info=True,
+            )
 
+            raise
 
     def add_or_update_document(self, doc: IndexedDocument):
         """Adds or updates a single document chunk in the index."""
         try:
             # Embedding generation remains the same
             vector_embedding = self.generate_embedding(doc.extracted_text_chunk)
-            
+
             # Convert NumPy array to Python list to avoid Pydantic serialization warnings
             vector_as_list = vector_embedding.tolist()
-            
+
             # Create the Pydantic object with the generated vector as a Python list
-            doc_with_vector = doc.copy(update={'vector': vector_as_list})
-            
+            doc_with_vector = doc.copy(update={"vector": vector_as_list})
+
             # Add the Pydantic object directly (or as a list)
             # LanceDB handles the conversion based on the LanceModel schema.
             self.table.add([doc_with_vector])
@@ -132,16 +158,18 @@ class Indexer:
             log.debug(f"Added/Updated document chunk: {doc.document_id}")
 
         except Exception as e:
-            log.error(f"Error adding/updating document chunk {doc.document_id}: {e}", exc_info=True)
+            log.error(
+                f"Error adding/updating document chunk {doc.document_id}: {e}",
+                exc_info=True,
+            )
             # Decide on error handling: skip, retry, raise?
-
 
     def remove_document(self, file_path: str):
         """Removes all document chunks associated with a given file_path."""
         try:
             # Use LanceDB's delete method with a WHERE clause
             # Ensure proper quoting/escaping if file_path can contain special characters
-            safe_file_path = file_path.replace("'", "''") # Basic SQL-like escaping
+            safe_file_path = file_path.replace("'", "''")  # Basic SQL-like escaping
             where_clause = f"file_path = '{safe_file_path}'"
             count = self.table.delete(where_clause)
             if count is not None and count > 0:
@@ -151,7 +179,6 @@ class Indexer:
         except Exception as e:
             log.error(f"Error deleting chunks for file {file_path}: {e}", exc_info=True)
 
-
     def search(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Search for documents semantically similar to the query text."""
         if not query_text:
@@ -160,29 +187,32 @@ class Indexer:
         try:
             query_embedding = self.generate_embedding(query_text)
 
-            # Perform search using LanceDB's search method
-            # Pass the query vector directly (as NumPy array)
             search_result = self.table.search(query_embedding).limit(top_k)
-            # Convert results to Pydantic models first for validation/structure
+
             pydantic_results = search_result.to_pydantic(IndexedDocument)
 
             # Convert Pydantic models back to dicts for the API response
             dict_results = [doc.dict() for doc in pydantic_results]
-            log.info(f"Search for '{query_text[:50]}...' returned {len(dict_results)} results.")
+            log.info(
+                f"Search for '{query_text[:50]}...' returned {len(dict_results)} results."
+            )
             return dict_results
 
         except Exception as e:
             # Check for specific LanceDB errors if possible
             # Example: If index is missing or query vector dimension mismatch
-            log.error(f"Search failed for query '{query_text[:50]}...': {e}", exc_info=True)
+            log.error(
+                f"Search failed for query '{query_text[:50]}...': {e}", exc_info=True
+            )
             # Re-raise a user-friendly error or return empty list?
-            raise ValueError(f"Search operation failed: {str(e)}") # Re-raise for now
-
+            raise ValueError(f"Search operation failed: {str(e)}")  # Re-raise for now
 
     def get_indexed_chunk_count(self, project_path: str) -> int:
         """Counts the number of indexed chunks associated with a given project_path prefix."""
         # Ensure project_path is handled safely if it comes from user input
-        safe_project_path = project_path.replace("'", "''") # Basic SQL injection protection
+        safe_project_path = project_path.replace(
+            "'", "''"
+        )  # Basic SQL injection protection
         # Use LIKE for prefix matching. Ensure the pattern is correct.
         # If project_path is '.', LIKE '.%' might not be what's intended if paths are relative.
         # Adjust logic based on how file_paths are stored (absolute vs relative).
@@ -193,8 +223,11 @@ class Indexer:
             log.debug(f"Found {count} chunks for project path prefix: {project_path}")
             return count
         except Exception as e:
-            log.error(f"Error counting chunks for project path {project_path}: {e}", exc_info=True)
-            return 0 # Return 0 on error
+            log.error(
+                f"Error counting chunks for project path {project_path}: {e}",
+                exc_info=True,
+            )
+            return 0
 
     def clear_index(self, project_path: str):
         """Removes all document chunks associated with a given project_path prefix."""
@@ -204,8 +237,15 @@ class Indexer:
             count_before = self.table.count_rows(where_clause)
             if count_before > 0:
                 deleted_count = self.table.delete(where_clause)
-                log.info(f"Cleared index: Deleted {deleted_count} chunks for project path prefix: {project_path}")
+                log.info(
+                    f"Cleared index: Deleted {deleted_count} chunks for project path prefix: {project_path}"
+                )
             else:
-                log.info(f"Index clear: No chunks found for project path prefix: {project_path}")
+                log.info(
+                    f"Index clear: No chunks found for project path prefix: {project_path}"
+                )
         except Exception as e:
-            log.error(f"Error clearing index for project path {project_path}: {e}", exc_info=True)
+            log.error(
+                f"Error clearing index for project path {project_path}: {e}",
+                exc_info=True,
+            )

@@ -1,30 +1,25 @@
 import pytest
-import pytest_asyncio # Add import for the fixture decorator
+import pytest_asyncio
 import httpx
 import os
 import shutil
-import asyncio
 from pathlib import Path
 from unittest.mock import patch
-import urllib.parse # Add import
 
-# Ensure the app can be imported. Adjust the path if necessary.
-# This assumes mcp_server.py is in the parent directory of tests/
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import the FastAPI app *after* potentially modifying sys.path
-# and *before* fixtures that might rely on settings being loaded
-from mcp_server import app, mcp_server_instance # Import the instance
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Define test paths relative to this file
+from main import app, mcp_server_instance
+
 TESTS_DIR = Path(__file__).parent
 TEST_PROJECT_DIR = TESTS_DIR / "test_project"
 TEST_LANCEDB_PATH = TESTS_DIR / "test_lancedb"
 TEST_PROJECT_FILE = TEST_PROJECT_DIR / "test_file.py"
 
-@pytest.fixture(scope="function", autouse=True)
-def test_environment(monkeypatch): # Make fixture synchronous
+
+@pytest.fixture(scope="function")
+def test_server_instance(monkeypatch):
     """
     Sets up a clean test environment for each test function.
     - Creates test directories (project, lancedb).
@@ -33,7 +28,6 @@ def test_environment(monkeypatch): # Make fixture synchronous
     - Cleans up directories and resets state after the test.
     """
     # --- Setup ---
-    # Ensure clean state before test
     if TEST_PROJECT_DIR.exists():
         shutil.rmtree(TEST_PROJECT_DIR)
     if TEST_LANCEDB_PATH.exists():
@@ -43,49 +37,40 @@ def test_environment(monkeypatch): # Make fixture synchronous
     TEST_LANCEDB_PATH.mkdir(parents=True, exist_ok=True)
     TEST_PROJECT_FILE.write_text("def hello():\n    print('hello world')\n")
 
-    # Monkeypatch environment variables *before* creating the new Settings instance
-    # Use relative path for testing
     monkeypatch.setenv("PROJECT_PATH", str(TEST_PROJECT_DIR))
     monkeypatch.setenv("LANCEDB_PATH", str(TEST_LANCEDB_PATH.resolve()))
-    monkeypatch.setenv("LOG_LEVEL", "DEBUG") # Optional: more verbose logs for tests
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
-    # Create a new Settings instance that reflects the monkeypatched environment
-    # Import Settings here if not already imported globally in the file
     from models import Settings
+
     test_settings = Settings()
 
-    # Patch attributes on the actual server instance using the new settings
-    # Ensure mcp_server_instance uses these settings during the test
-    with patch('mcp_server.mcp_server_instance.settings', test_settings), \
-         patch('mcp_server.mcp_server_instance.project_path', test_settings.project_path), \
-         patch('mcp_server.mcp_server_instance.status', "Initializing"), \
-         patch('mcp_server.mcp_server_instance.file_watcher', None), \
-         patch('mcp_server.mcp_server_instance.indexer', None):
+    from mcp_server import MCPServer
+    test_server_instance = MCPServer()
 
-        # Re-initialize components based on patched settings if needed by tests
-        # Note: Direct re-initialization might be complex. Tests might need
-        # to trigger initialization logic (like the startup event).
-        # For now, we rely on endpoint logic to use the patched settings.
+    with patch("main.mcp_server_instance", test_server_instance), \
+         patch.object(test_server_instance, 'status', "Initializing", create=True), \
+         patch.object(test_server_instance, 'file_watcher', None, create=True), \
+         patch.object(test_server_instance, 'indexer', None, create=True):
+         # Note: We don't need to patch settings or project_path on the instance itself
+         # because the test_server_instance was created *with* the correct settings
+         # due to the monkeypatched environment variables.
 
-        yield # Test runs here
+        yield test_server_instance
 
-    # --- Teardown ---
-    if TEST_PROJECT_DIR.exists():
-        shutil.rmtree(TEST_PROJECT_DIR)
-    if TEST_LANCEDB_PATH.exists():
-        shutil.rmtree(TEST_LANCEDB_PATH)
+    # --- Teardown (after yield) ---
+    with patch("main.mcp_server_instance", None):
+        pass
 
-    # Reset global state after test (important for subsequent tests)
-    # This might involve resetting singletons or module-level variables
-    # in mcp_server, indexer, file_watcher if they maintain state.
-    # Example: Resetting server state if it's a mutable global
-    # from mcp_server import server_state # Re-import might be needed
-    # server_state = ServerState.INITIALIZING # Or reset function
 
-@pytest_asyncio.fixture(scope="function") # Use pytest_asyncio.fixture for async fixture
+@pytest_asyncio.fixture(
+    scope="function"
+)
 async def client():
     """Provides an HTTPX async client for testing the FastAPI app."""
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as ac:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as ac:
         # Ensure server startup event runs if needed for initialization
         # This might be implicitly handled by AsyncClient or require explicit call
         # await app.router.startup() # If startup logic isn't run automatically
@@ -101,77 +86,77 @@ async def test_read_root(client: httpx.AsyncClient):
     """Test the root endpoint."""
     response = await client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"message": "MCP Indexing Server"}
+    assert response.json() == {"message": "MCP Indexing Server is running"}
+
 
 # Add more tests below...
 
+
 @pytest.mark.asyncio
-async def test_status_initial(client: httpx.AsyncClient):
+async def test_status_initial(client: httpx.AsyncClient, test_server_instance):
     """Test initial status endpoint (assuming INITIALIZING from patch)."""
-    # The test_environment fixture patches server_state to INITIALIZING
-    settings = mcp_server_instance.settings
-    # Use the path directly
-    # Use the path directly, adding a trailing slash to match potential redirect behavior
+    settings = test_server_instance.settings
     response = await client.get(f"/status/{settings.project_path}/")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "Initializing" # Use string status
+    assert data["status"] == "Initializing"
     assert data["project_path"] == settings.project_path
-    assert "indexed_chunk_count" in data # Check key exists
+    assert "indexed_chunk_count" in data
+
 
 @pytest.mark.asyncio
-async def test_status_incorrect_path(client: httpx.AsyncClient):
+async def test_status_incorrect_path(client: httpx.AsyncClient, test_server_instance):
     """Test status endpoint with an incorrect project path."""
-    incorrect_path = "nonexistent%2Fpath" # Already URL-encoded style
+    incorrect_path = "nonexistent%2Fpath"
     response = await client.get(f"/status/{incorrect_path}")
-    assert response.status_code == 200 # Endpoint returns 200 OK for unmatched paths
+    assert response.status_code == 200
     data = response.json()
     assert data["status"] == "Not Found"
-    assert data["project_path"] == incorrect_path.replace("%2F", "/") # Compare decoded path
+    assert data["project_path"] == incorrect_path.replace("%2F", "/")
     assert "not managed by this server instance" in data["error_message"]
 
+
 @pytest.mark.asyncio
-@patch('mcp_server.mcp_server_instance.indexer') # Mock the indexer instance attribute
-async def test_status_chunk_count(mock_indexer, client: httpx.AsyncClient):
+@patch("main.mcp_server_instance.indexer")
+async def test_status_chunk_count(mock_indexer, client: httpx.AsyncClient, test_server_instance):
     """Test status endpoint reports chunk count from indexer."""
     mock_indexer.get_indexed_chunk_count.return_value = 123
-    settings = mcp_server_instance.settings
-    # Use the path directly - FastAPI's path parameter with :path converter handles URL encoding
+    settings = test_server_instance.settings
 
-    # Set state to Watching to simulate a stable state where count is relevant
-    with patch('mcp_server.mcp_server_instance.status', "Watching"): # Patch instance status
-        # Use the path directly
+    with patch("main.mcp_server_instance.status", "Watching"):
         response = await client.get(f"/status/{settings.project_path}/")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "Watching" # Use string status
+    assert data["status"] == "Watching"
     assert data["project_path"] == settings.project_path
     assert data["indexed_chunk_count"] == 123
     mock_indexer.get_indexed_chunk_count.assert_called_once()
 
-@pytest.mark.asyncio
-@patch('fastapi.BackgroundTasks.add_task') # Mock FastAPI's background task adder
-@patch('mcp_server.mcp_server_instance.file_watcher') # Mock the file_watcher instance attribute
-async def test_index_trigger(mock_file_watcher, mock_add_task, client: httpx.AsyncClient): # Rename mock
-    """Test triggering the index endpoint successfully."""
-    settings = mcp_server_instance.settings # Get settings to access project_path
-    # Ensure initial state allows indexing
-    with patch('mcp_server.mcp_server_instance.status', "Watching"): # Patch instance status
-        response = await client.post("/index", json={"project_path": settings.project_path, "force_reindex": False})
 
-    assert response.status_code == 200
-    # Check for the actual message format
-    assert f"Indexing process initiated for {settings.project_path} in the background." == response.json()["message"]
-    # Check that create_task was called, implying scan was initiated
-    mock_add_task.assert_called_once() # Check add_task mock
-    # Check that the correct function (initial_scan) was passed to create_task
-    # Access the coroutine function passed to create_task
-    # Check the arguments passed to add_task
-    # First arg is the task function, subsequent are args/kwargs for it
+@pytest.mark.asyncio
+@patch("fastapi.BackgroundTasks.add_task")
+@patch("main.mcp_server_instance.file_watcher")
+async def test_index_trigger(
+    mock_file_watcher, mock_add_task, client: httpx.AsyncClient, test_server_instance
+):
+    """Test triggering the index endpoint successfully."""
+    settings = test_server_instance.settings
+    with patch("main.mcp_server_instance.status", "Watching"):
+        response = await client.post(
+            "/index",
+            json={"project_path": settings.project_path, "force_reindex": False},
+        )
+
+    assert response.status_code == 202
+    assert (
+        f"Indexing process initiated for {settings.project_path} in the background."
+        == response.json()["message"]
+    )
+    mock_add_task.assert_called_once()
     task_func = mock_add_task.call_args[0][0]
     task_kwargs = mock_add_task.call_args[1]
-    assert task_func == mcp_server_instance._perform_scan
+    assert task_func == test_server_instance._perform_scan
     assert task_kwargs.get("force_reindex") is False
     # Check if the coroutine function wraps the intended method
     # This check might be fragile depending on how the coroutine is created
@@ -186,46 +171,55 @@ async def test_index_trigger(mock_file_watcher, mock_add_task, client: httpx.Asy
     # This isn't perfect. A better mock setup might be needed.
     # For now, asserting create_task was called is the main check.
 
+
 @pytest.mark.asyncio
-async def test_index_trigger_conflict(client: httpx.AsyncClient):
+async def test_index_trigger_conflict(client: httpx.AsyncClient, test_server_instance):
     """Test triggering index endpoint when already scanning."""
-    settings = mcp_server_instance.settings # Get settings to access project_path
-    # Set state to SCANNING to simulate conflict
-    with patch('mcp_server.mcp_server_instance.status', "Scanning"): # Patch instance status
-        response = await client.post("/index", json={"project_path": settings.project_path, "force_reindex": False})
+    settings = test_server_instance.settings
+    with patch("main.mcp_server_instance.status", "Scanning"):
+        response = await client.post(
+            "/index",
+            json={"project_path": settings.project_path, "force_reindex": False},
+        )
 
     assert response.status_code == 409
     assert "already in progress" in response.json()["detail"]
 
-@pytest.mark.asyncio
-@patch('fastapi.BackgroundTasks.add_task') # Mock FastAPI's background task adder
-@patch('mcp_server.mcp_server_instance.file_watcher') # Mock instance attribute
-@patch('mcp_server.mcp_server_instance.indexer') # Mock instance attribute
-async def test_index_trigger_force_reindex(mock_indexer, mock_file_watcher, mock_add_task, client: httpx.AsyncClient): # Rename mock
-    settings = mcp_server_instance.settings # Get settings to access project_path
-    """Test triggering index with force_reindex=True."""
-    with patch('mcp_server.mcp_server_instance.status', "Watching"): # Patch instance status
-        response = await client.post("/index", json={"project_path": settings.project_path, "force_reindex": True})
 
-    assert response.status_code == 200
-    # Check for the actual message format
-    assert f"Indexing process initiated for {settings.project_path} in the background." == response.json()["message"]
+@pytest.mark.asyncio
+@patch("fastapi.BackgroundTasks.add_task")
+@patch("main.mcp_server_instance.file_watcher")
+@patch("main.mcp_server_instance.indexer")
+async def test_index_trigger_force_reindex(
+    mock_indexer, mock_file_watcher, mock_add_task, client: httpx.AsyncClient, test_server_instance
+):
+    settings = test_server_instance.settings
+    """Test triggering index with force_reindex=True."""
+    with patch("main.mcp_server_instance.status", "Watching"):
+        response = await client.post(
+            "/index",
+            json={"project_path": settings.project_path, "force_reindex": True},
+        )
+
+    assert response.status_code == 202
+    assert (
+        f"Indexing process initiated for {settings.project_path} in the background."
+        == response.json()["message"]
+    )
     # Note: clear_index is called within the background task (_perform_scan),
     # so asserting it here immediately after the endpoint call will fail.
-    # We rely on asserting that add_task was called with the correct arguments.
-    # mock_indexer.clear_index.assert_called_once_with(mcp_server_instance.project_path) # Removed this assertion
-    mock_add_task.assert_called_once() # Verify scan task was added
-    # Check the arguments passed to add_task
+    mock_add_task.assert_called_once()
     task_func = mock_add_task.call_args[0][0]
     task_kwargs = mock_add_task.call_args[1]
-    assert task_func == mcp_server_instance._perform_scan
+    assert task_func == test_server_instance._perform_scan
     assert task_kwargs.get("force_reindex") is True
-    # Similar check for the task function as in test_index_trigger
+
 
 @pytest.mark.asyncio
-@patch('mcp_server.mcp_server_instance.indexer') # Mock instance attribute
-async def test_search(mock_indexer, client: httpx.AsyncClient):
-    import json # Add json import for stringifying metadata
+@patch("main.mcp_server_instance.indexer")
+async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_instance):
+    import json
+
     """Test the search endpoint."""
     mock_search_results = [
         {
@@ -234,9 +228,9 @@ async def test_search(mock_indexer, client: httpx.AsyncClient):
             "content_hash": "hash1",
             "last_modified_timestamp": 1678886400.0,
             "extracted_text_chunk": "content 1",
-            "metadata_json": json.dumps({"some": "data1"}), # Provide as JSON string
-            "metadata": {"some": "data1"}, # Example metadata
-            "vector": [0.1, 0.2] # Example vector
+            "metadata_json": json.dumps({"some": "data1"}),
+            "metadata": {"some": "data1"},
+            "vector": [0.1, 0.2],
         },
         {
             "document_id": "test/file2.py::0",
@@ -244,35 +238,28 @@ async def test_search(mock_indexer, client: httpx.AsyncClient):
             "content_hash": "hash2",
             "last_modified_timestamp": 1678886401.0,
             "extracted_text_chunk": "content 2",
-            "metadata_json": json.dumps({"some": "data2"}), # Provide as JSON string
+            "metadata_json": json.dumps({"some": "data2"}),
             "metadata": {"some": "data2"},
-            "vector": [0.3, 0.4]
+            "vector": [0.3, 0.4],
         },
     ]
-    # Adjust mock to return SearchResult objects if the endpoint expects them
-    # Assuming the endpoint converts SearchResult to dict based on Pydantic model
-    mock_indexer.search.return_value = mock_search_results # Keep as dict if endpoint returns dicts
+    mock_indexer.search.return_value = mock_search_results
 
-    # Assume server is in a state where search is allowed (e.g., WATCHING)
-    with patch('mcp_server.mcp_server_instance.status', "Watching"): # Patch instance status
-        response = await client.post("/search", json={"query": "test query", "top_k": 5})
+    with patch("main.mcp_server_instance.status", "Watching"):
+        response = await client.post(
+            "/search", json={"query": "test query", "top_k": 5}
+        )
 
     assert response.status_code == 200
     data = response.json()
-    # Compare based on the expected JSON output structure
-    # We need to compare against the *expected output* of the API,
-    # which has 'metadata' as a dict, not 'metadata_json' as a string.
-    expected_api_results = [item | {"metadata": json.loads(item.pop("metadata_json"))} for item in mock_search_results]
-    assert data["results"] == expected_api_results # Compare the list within the 'results' key
-    mock_indexer.search.assert_called_once_with(query_text="test query", top_k=5) # Match actual kwarg
+    expected_api_results = []
+    for item in mock_search_results:
+        expected_item = item.copy()
+        expected_item["metadata"] = json.loads(expected_item.pop("metadata_json"))
+        expected_item.pop("vector", None)
+        expected_api_results.append(expected_item)
+    assert data["results"] == expected_api_results
+    mock_indexer.search.assert_called_once_with(query_text="test query", top_k=5)
 
-# Test status changes during indexing (requires more complex mocking/waiting)
-# @pytest.mark.asyncio
-# async def test_status_during_indexing(client: httpx.AsyncClient):
-#     # 1. Set state to WATCHING
-#     # 2. Mock initial_scan to take time and update state
-#     # 3. Call /index
-#     # 4. Immediately call /status, check for SCANNING
-#     # 5. Wait for mock scan to finish (update state to WATCHING)
-#     # 6. Call /status again, check for WATCHING
-#     pass # Implementation requires careful async/mock handling
+
+# TODO: Implement test_status_during_indexing if needed, requires careful async/mock handling.
