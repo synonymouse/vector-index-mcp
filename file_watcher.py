@@ -4,6 +4,7 @@ import hashlib
 import logging
 import json
 from pathlib import Path
+import pathspec # <-- Add pathspec import
 from typing import List, Set, Dict, Any
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -16,10 +17,23 @@ from content_extractor import chunk_content # Import the chunking function
 class FileWatcher:
     def __init__(self, project_path: str, indexer: Indexer, ignore_patterns: List[str] = None):
         self.project_path = project_path
+        self.project_root = Path(project_path).resolve() # Store resolved root path
         self.indexer = indexer
-        self.ignore_patterns = ignore_patterns or ['.git', '__pycache__', '*.pyc']
         self.known_files: Dict[str, Dict[str, Any]] = {}  # {file_path: {'hash': str, 'last_modified': float}}
-        
+
+        # --- Initialize PathSpec ---
+        patterns = ignore_patterns or []
+        gitignore_path = self.project_root / '.gitignore'
+        if gitignore_path.is_file():
+            try:
+                with open(gitignore_path, 'r') as f:
+                    patterns.extend(f.read().splitlines())
+            except Exception as e:
+                logging.error(f"Error reading .gitignore file at {gitignore_path}: {e}")
+        # Add common defaults if not already present (optional, depends on desired behavior)
+        # patterns.extend(['.git', '__pycache__', '*.pyc', '.DS_Store', '.env', '.venv'])
+        self.path_spec = pathspec.PathSpec.from_lines('gitwildmatch', patterns)
+
         self.observer = Observer()
         self.event_handler = ProjectEventHandler(self)
     
@@ -40,13 +54,17 @@ class FileWatcher:
             return 0
     
     def _should_ignore(self, file_path: str) -> bool:
-        path = Path(file_path)
-        if path.is_dir():
+        """Check if a file path should be ignored based on .gitignore rules."""
+        absolute_path = Path(file_path).resolve()
+        if absolute_path.is_dir():
+            return True # Ignore directories themselves
+
+        try:
+            relative_path = absolute_path.relative_to(self.project_root)
+            return self.path_spec.match_file(str(relative_path))
+        except ValueError:
+            # File is outside the project root, ignore it
             return True
-        
-        for pattern in self.ignore_patterns:
-            if path.match(pattern):
-                return True
         return False
     
     def _process_and_index_file(self, file_path: str) -> bool:
