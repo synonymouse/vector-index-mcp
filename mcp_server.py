@@ -46,7 +46,8 @@ class MCPServer:
         # --- State Tracking ---
         # NOTE: Simplified state for the single configured project path
         self.project_path = self.settings.project_path # Store the configured path
-        self.status: str = "Initializing" # Initial status before first scan
+        # Start watching immediately, initial scan must be triggered via API
+        self.status: str = "Idle - Initial Scan Required"
         self.last_scan_start_time: Optional[float] = None
         self.last_scan_end_time: Optional[float] = None
         self.current_error: Optional[str] = None
@@ -54,8 +55,16 @@ class MCPServer:
 
         print(f"Loaded settings: {self.settings}")
         print(f"Monitoring project path: {self.project_path}")
-        # Start initial scan and watch in background
-        self._start_initial_scan_and_watch()
+
+        # Start ONLY the file watcher thread in the background
+        print("Starting file watcher thread...")
+        self.watcher_thread = threading.Thread(
+            target=self.file_watcher.start, # Runs observer.schedule() and observer.start()
+            daemon=True
+        )
+        self.watcher_thread.start()
+        self.status = "Watching" # Set status to watching after thread starts
+        print("File watcher thread started. Initial scan required via /index endpoint.")
 
     def _perform_scan(self, project_path: str, force_reindex: bool):
         """Internal method to run the indexing scan."""
@@ -100,32 +109,36 @@ class MCPServer:
             self.last_scan_end_time = time.time() # Record end time even on error
             print(f"ERROR during scan for {project_path}: {e}") # Replace with logging
 
-    def _start_initial_scan_and_watch(self):
-        """Start the initial scan and continuous watching in background threads."""
-        # Run initial scan in a separate thread first
-        print("Starting initial background scan...")
-        initial_scan_thread = threading.Thread(
-            target=self._perform_scan,
-            args=(self.project_path, False), # Initial scan, don't force reindex
-            daemon=True
-        )
-        initial_scan_thread.start()
+    # Removed _start_initial_scan_and_watch method as it's no longer called automatically.
+    # The watcher thread is now started directly in __init__.
+    # The initial scan is triggered via the /index endpoint.
 
-        # Start the continuous watcher thread.
+    # def _start_initial_scan_and_watch(self): # Keep the definition commented out for reference if needed
+    #     """Start the initial scan and continuous watching in background threads."""
+    #     # Run initial scan in a separate thread first
+    #     print("Starting initial background scan...")
+    #     initial_scan_thread = threading.Thread(
+    #         target=self._perform_scan,
+    #         args=(self.project_path, False), # Initial scan, don't force reindex
+    #         daemon=True
+    #     )
+    #     initial_scan_thread.start()
+
+        # Start the continuous watcher thread. (This part moved to __init__)
         # Ensure it doesn't start processing events *before* the initial scan is done.
         # The FileWatcher's start() method likely blocks, so it's okay to start it.
         # If start() returns immediately, need careful synchronization.
         # Assuming file_watcher.start() blocks until stopped.
-        if self.watcher_thread is None:
-             print("Starting file watcher thread...")
-             self.watcher_thread = threading.Thread(
-                 target=self.file_watcher.start, # This runs observer.schedule() and observer.join()
-                 daemon=True
-             )
-             self.watcher_thread.start()
-             print("File watcher thread started.")
-        else:
-             print("File watcher thread already running.")
+        # if self.watcher_thread is None:
+        #      print("Starting file watcher thread...")
+        #      self.watcher_thread = threading.Thread(
+        #          target=self.file_watcher.start, # This runs observer.schedule() and observer.join()
+        #          daemon=True
+        #      )
+        #      self.watcher_thread.start()
+        #      print("File watcher thread started.")
+        # else:
+        #      print("File watcher thread already running.")
 
 
     def shutdown(self):
@@ -243,7 +256,7 @@ async def search_documents(request: SearchRequest):
             try:
                 # Parse the metadata JSON string if it exists and is valid
                 # Use dictionary access for mocked results
-                metadata_json = doc.get('metadata_json') # Use .get for safety
+                metadata_json = doc.get('metadata_json')
                 parsed_metadata = json.loads(metadata_json) if metadata_json else {}
             except (json.JSONDecodeError, TypeError):
                  # Handle cases where metadata might be invalid JSON or None
@@ -253,13 +266,13 @@ async def search_documents(request: SearchRequest):
             # Create the response item, copying fields and adding parsed metadata
             processed_results.append(
                 SearchResultItem(
-                    document_id=doc.get('document_id'), # Use .get for safety
+                    document_id=doc.get('document_id'),
                     file_path=doc.get('file_path'),
                     content_hash=doc.get('content_hash'),
                     last_modified_timestamp=doc.get('last_modified_timestamp'),
                     extracted_text_chunk=doc.get('extracted_text_chunk'),
-                    metadata=parsed_metadata,
-                    vector=doc.get('vector') # Use .get for safety
+                    metadata=parsed_metadata
+                    # vector=doc.get('vector') # Removed vector from response item
                 )
             )
 
