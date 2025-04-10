@@ -50,13 +50,47 @@ class Indexer:
             print(f"Error deleting chunks for file {file_path}: {e}") # Replace with logging
             # Consider re-raising or specific error handling
 
+    def clear_index(self, project_path: str):
+        """Removes all document chunks associated with a given project_path prefix."""
+        # Ensure project_path ends with a separator to avoid accidental deletion
+        # e.g. /path/to/proj matching /path/to/project_extra
+        # However, file paths might be stored relative or absolute, need consistency.
+        # Assuming file_path starts with the project_path for now.
+        # LanceDB uses SQL-like syntax for WHERE clauses.
+        # Need to handle potential SQL injection if project_path is user-controlled,
+        # but here it should come from validated settings or API requests.
+        # Let's use LIKE for prefix matching. Ensure proper quoting.
+        safe_project_path = project_path.replace("'", "''") # Basic SQL escaping
+        where_clause = f"file_path LIKE '{safe_project_path}%'"
+        try:
+            count_before = self.table.count_rows(where_clause)
+            if count_before > 0:
+                self.table.delete(where_clause)
+                print(f"Deleted {count_before} chunks for project path prefix: {project_path}") # Replace with logging
+            else:
+                print(f"No chunks found for project path prefix: {project_path}") # Replace with logging
+        except Exception as e:
+            print(f"Error clearing index for project path {project_path}: {e}") # Replace with logging
+            # Consider re-raising or specific error handling
+
+    def get_indexed_chunk_count(self, project_path: str) -> int:
+        """Counts the number of indexed chunks associated with a given project_path prefix."""
+        safe_project_path = project_path.replace("'", "''") # Basic SQL escaping
+        filter_clause = f"file_path LIKE '{safe_project_path}%'"
+        try:
+            count = self.table.count_rows(filter_clause)
+            return count
+        except Exception as e:
+            print(f"Error counting chunks for project path {project_path}: {e}") # Replace with logging
+            return 0 # Return 0 on error
+
     def search(self, query_text: str, top_k: int = 5) -> List[IndexedDocument]:
         """Search for documents semantically similar to the query text.
-        
+
         Args:
             query_text: Text to search for
             top_k: Maximum number of results to return
-            
+
         Returns:
             List of IndexedDocument objects matching the query
         """

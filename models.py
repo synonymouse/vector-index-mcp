@@ -29,3 +29,19 @@ class Settings(BaseModel):
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     project_path: str = os.getenv("PROJECT_PATH", ".")
     ignore_patterns: List[str] = os.getenv("IGNORE_PATTERNS", ".git,__pycache__,*.pyc").split(",")
+
+# --- Models for API Endpoints ---
+
+class IndexRequest(BaseModel):
+    """Request body for the /index endpoint."""
+    project_path: str = Field(..., description="The project path to index (currently must match server config)")
+    force_reindex: bool = Field(default=False, description="If true, clear existing index before scanning")
+
+class IndexingStatusResponse(BaseModel):
+    """Response body for the /status endpoint."""
+    project_path: str = Field(..., description="The project path this status pertains to")
+    status: str = Field(..., description="Current indexing status (e.g., Initializing, Scanning, Watching, Error, Not Found)")
+    last_scan_start_time: Optional[float] = Field(default=None, description="Timestamp (UTC epoch seconds) when the last scan started")
+    last_scan_end_time: Optional[float] = Field(default=None, description="Timestamp (UTC epoch seconds) when the last scan finished")
+    indexed_chunk_count: Optional[int] = Field(default=None, description="Number of document chunks currently indexed for the path")
+    error_message: Optional[str] = Field(default=None, description="Details if the status is 'Error'")
