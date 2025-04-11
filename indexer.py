@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import List, Dict, Any
+from typing import List, TypedDict
 import lancedb
 import pyarrow as pa
 import numpy as np
@@ -15,6 +15,23 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 )
 log = logging.getLogger(__name__)
+
+class FileMetadataDict(TypedDict):
+    """Represents the FileMetadata model when serialized to a dict."""
+    original_path: str
+
+class SearchResultDict(TypedDict):
+    """Represents the structure of a single search result dict returned by indexer.search."""
+    document_id: str
+    file_path: str
+    content_hash: str
+    last_modified_timestamp: float
+    chunk_index: int
+    total_chunks: int
+    extracted_text_chunk: str
+    metadata: FileMetadataDict
+    # vector is intentionally omitted as it's usually not needed by the caller
+    # score: float # Optional: Include score if returned by search method
 
 
 class Indexer:
@@ -179,7 +196,7 @@ class Indexer:
         except Exception as e:
             log.error(f"Error deleting chunks for file {file_path}: {e}", exc_info=True)
 
-    def search(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def search(self, query_text: str, top_k: int = 5) -> List[SearchResultDict]:
         """Search for documents semantically similar to the query text."""
         if not query_text:
             log.warning("Received empty query text for search")
@@ -191,12 +208,11 @@ class Indexer:
 
             pydantic_results = search_result.to_pydantic(IndexedDocument)
 
-            # Convert Pydantic models back to dicts for the API response
-            dict_results = [doc.dict() for doc in pydantic_results]
+            typed_results: List[SearchResultDict] = [doc.model_dump() for doc in pydantic_results]
             log.info(
-                f"Search for '{query_text[:50]}...' returned {len(dict_results)} results."
+                f"Search for '{query_text[:50]}...' returned {len(typed_results)} results."
             )
-            return dict_results
+            return typed_results
 
         except Exception as e:
             # Check for specific LanceDB errors if possible

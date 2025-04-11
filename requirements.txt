@@ -6,7 +6,5 @@ transformers
 lancedb
 python-dotenv
 pydantic
-pydantic-settings
-pandas
 tiktoken
 pathspec

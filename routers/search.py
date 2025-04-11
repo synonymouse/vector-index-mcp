@@ -3,8 +3,7 @@ import json
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
-# Import models and dependency provider
-from models import SearchRequest, SearchResponse, SearchResultItem
+from models import SearchRequest, SearchResponse, SearchResultItem, FileMetadata
 from main import get_server_instance
 from mcp_server import MCPServer
 
@@ -36,27 +35,18 @@ async def search_documents(
         )
 
     try:
-        # Get raw results (List[Dict[str, Any]]) from indexer
-        # Access indexer via the injected server instance
         raw_results = server_instance.indexer.search(
             query_text=request.query, top_k=request.top_k
         )
 
-        # Process results for API response
         processed_results: List[SearchResultItem] = []
         for doc in raw_results:
-            try:
-                # Parse the metadata JSON string if it exists and is valid
-                # Assuming 'doc' is a dictionary-like object from the indexer search result
-                metadata_json = doc.get("metadata_json")
-                parsed_metadata = json.loads(metadata_json) if metadata_json else {}
-            except (json.JSONDecodeError, TypeError):
-                # Handle cases where metadata might be invalid JSON or None
-                parsed_metadata = {"error": "invalid or missing metadata format"}
-                log.warning(f"Invalid metadata format for doc_id {doc.get('document_id')}: {metadata_json}")
+            metadata_obj = doc.get('metadata')
+            # Basic check: LanceDB might return dicts, ensure it's usable.
+            if not isinstance(metadata_obj, (dict, FileMetadata)):
+                 log.warning(f"Unexpected metadata format for doc_id {doc.get('document_id')}: {type(metadata_obj)}")
+                 metadata_obj = FileMetadata(original_path="<metadata error>")
 
-
-            # Create the response item, copying fields and adding parsed metadata
             processed_results.append(
                 SearchResultItem(
                     document_id=doc.get("document_id"),
@@ -64,8 +54,7 @@ async def search_documents(
                     content_hash=doc.get("content_hash"),
                     last_modified_timestamp=doc.get("last_modified_timestamp"),
                     extracted_text_chunk=doc.get("extracted_text_chunk"),
-                    metadata=parsed_metadata,
-                    # vector field is intentionally excluded from the response
+                    metadata=metadata_obj,
                 )
             )
 

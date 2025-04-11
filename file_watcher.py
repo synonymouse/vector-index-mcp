@@ -4,13 +4,18 @@ import logging
 import json
 from pathlib import Path
 import pathspec
-from typing import List, Dict, Any
+from typing import List, Dict, TypedDict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from indexer import Indexer
-from models import IndexedDocument
+from models import IndexedDocument, FileMetadata
 from content_extractor import chunk_content
+
+class KnownFileInfo(TypedDict):
+    """Structure for storing info about known files."""
+    hash: str
+    last_modified: float
 
 
 class FileWatcher:
@@ -20,7 +25,7 @@ class FileWatcher:
         self.project_path = project_path
         self.project_root = Path(project_path).resolve()
         self.indexer = indexer
-        self.known_files: Dict[str, Dict[str, Any]] = {}
+        self.known_files: Dict[str, KnownFileInfo] = {}
 
         patterns = ignore_patterns or []
         gitignore_path = self.project_root / ".gitignore"
@@ -91,8 +96,6 @@ class FileWatcher:
                 self.indexer.remove_document(file_path)
                 return True
 
-            metadata_dict = {"original_path": file_path}
-            metadata_json_str = json.dumps(metadata_dict)
 
             for i, chunk_text in enumerate(chunks):
                 chunk_doc_id = f"{file_path}::{i}"
@@ -104,7 +107,7 @@ class FileWatcher:
                     chunk_index=i,
                     total_chunks=total_chunks,
                     extracted_text_chunk=chunk_text,
-                    metadata_json=metadata_json_str,
+                    metadata=FileMetadata(original_path=file_path),
                     # Vector will be added by indexer
                 )
                 self.indexer.add_or_update_document(document)

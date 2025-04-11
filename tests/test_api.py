@@ -10,7 +10,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from main import app, mcp_server_instance
+from main import app
+from models import FileMetadata
 
 TESTS_DIR = Path(__file__).parent
 TEST_PROJECT_DIR = TESTS_DIR / "test_project"
@@ -40,10 +41,6 @@ def test_server_instance(monkeypatch):
     monkeypatch.setenv("PROJECT_PATH", str(TEST_PROJECT_DIR))
     monkeypatch.setenv("LANCEDB_PATH", str(TEST_LANCEDB_PATH.resolve()))
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
-
-    from models import Settings
-
-    test_settings = Settings()
 
     from mcp_server import MCPServer
     test_server_instance = MCPServer()
@@ -218,8 +215,6 @@ async def test_index_trigger_force_reindex(
 @pytest.mark.asyncio
 @patch("main.mcp_server_instance.indexer")
 async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_instance):
-    import json
-
     """Test the search endpoint."""
     mock_search_results = [
         {
@@ -228,8 +223,7 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
             "content_hash": "hash1",
             "last_modified_timestamp": 1678886400.0,
             "extracted_text_chunk": "content 1",
-            "metadata_json": json.dumps({"some": "data1"}),
-            "metadata": {"some": "data1"},
+            "metadata": FileMetadata(original_path="test/file1.py"),
             "vector": [0.1, 0.2],
         },
         {
@@ -238,8 +232,7 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
             "content_hash": "hash2",
             "last_modified_timestamp": 1678886401.0,
             "extracted_text_chunk": "content 2",
-            "metadata_json": json.dumps({"some": "data2"}),
-            "metadata": {"some": "data2"},
+            "metadata": FileMetadata(original_path="test/file2.py"),
             "vector": [0.3, 0.4],
         },
     ]
@@ -255,8 +248,10 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
     expected_api_results = []
     for item in mock_search_results:
         expected_item = item.copy()
-        expected_item["metadata"] = json.loads(expected_item.pop("metadata_json"))
         expected_item.pop("vector", None)
+
+        if isinstance(expected_item["metadata"], FileMetadata):
+             expected_item["metadata"] = expected_item["metadata"].model_dump()
         expected_api_results.append(expected_item)
     assert data["results"] == expected_api_results
     mock_indexer.search.assert_called_once_with(query_text="test query", top_k=5)

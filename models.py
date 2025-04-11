@@ -1,9 +1,12 @@
-from typing import List, Dict, Any, Optional
-from pydantic import Field
+from typing import List, Optional
+from pydantic import BaseModel, Field
 from lancedb.pydantic import LanceModel, Vector
 import os
 
-
+class FileMetadata(BaseModel):
+    """Metadata specifically for tracking the original file path."""
+    original_path: str = Field(..., description="The original path of the indexed file")
+   
 class IndexedDocument(LanceModel):
     document_id: str = Field(
         ..., description="Unique identifier for the document chunk"
@@ -18,8 +21,8 @@ class IndexedDocument(LanceModel):
     extracted_text_chunk: str = Field(
         ..., description="The actual text content of this chunk"
     )
-    metadata_json: str = Field(
-        default="{}", description="JSON string representation of metadata"
+    metadata: FileMetadata = Field(
+        ..., description="Metadata containing the original file path"
     )
     # Make vector optional during initial Pydantic validation, indexer will add it before saving.
     vector: Optional[Vector(384)] = Field(
@@ -107,8 +110,8 @@ class SearchResultItem(LanceModel):
     extracted_text_chunk: str = Field(
         ..., description="The text content of the matching chunk"
     )
-    metadata: Dict[str, Any] = Field(
-        default={}, description="Metadata associated with the file/chunk"
+    metadata: FileMetadata = Field(
+        ..., description="Metadata containing the original file path"
     )
 
 
