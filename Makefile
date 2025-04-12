@@ -1,4 +1,4 @@
-# Makefile for index-mcp development
+# Makefile for vector-index-mcp development
 
 # Variables
 VENV_DIR := .venv
@@ -50,7 +50,7 @@ lint: $(VENV_DIR)/bin/activate
 # Requires a .env file in the project root for development convenience
 run-dev: $(VENV_DIR)/bin/activate
 	@echo "Starting development server (uvicorn with reload)..."
-	$(PYTHON) -m uvicorn index_mcp.main:app --host $${HOST:-0.0.0.0} --port $${PORT:-8000}
+	$(PYTHON) -m uvicorn vector_index_mcp.main:app --host $${HOST:-0.0.0.0} --port $${PORT:-8000}
 
 # Clean temporary files
 clean:

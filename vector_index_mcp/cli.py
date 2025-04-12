@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 def main():
     """
-    Entry point for the index-mcp command.
+    Entry point for the vector-index-mcp command.
     Loads environment variables from the current working directory's .env file
     and starts the Uvicorn server.
     """
@@ -40,7 +40,7 @@ def main():
     log.info(f"Starting MCP Indexing Server on {host}:{port}")
     # Note: We don't use reload=True here as this is for the packaged application
     uvicorn.run(
-        "index_mcp.main:app",
+        "vector_index_mcp.main:app",
         host=host,
         port=port,
         log_level="info",  # Uvicorn's log level

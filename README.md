@@ -57,7 +57,7 @@ PORT=8000
 From the root directory of your software project (where the `.env` file is located), run:
 
 ```bash
-pipx run index-mcp
+pipx run vector-index-mcp
 ```
 
 `pipx` will automatically download the server, install its dependencies in an isolated environment, and start it. The server will use the `.env` file in your current directory for configuration, begin watching the `PROJECT_PATH` for changes, and create the LanceDB database at `LANCEDB_URI`.
@@ -71,7 +71,7 @@ If you want to contribute to or modify the server itself:
 1.  **Clone the repository:**
     ```bash
     git clone <your-repository-url> # TODO: Update URL
-    cd indexing-mcp
+    cd vector-index-mcp
     ```
 2.  **Set up the development environment:**
     This command creates a virtual environment (`.venv`), installs all required dependencies (runtime and development), including `ruff` for linting/formatting.
@@ -84,15 +84,15 @@ If you want to contribute to or modify the server itself:
     ```
     (On Windows using Git Bash or WSL, the command is the same. For Command Prompt/PowerShell, use `.venv\Scripts\activate`)
 
-4.  **(Optional) Create a `.env` file in the `indexing-mcp` project root** for development-specific settings if needed (e.g., for `make run-dev`).
+4.  **(Optional) Create a `.env` file in the `vector-index-mcp` project root** for development-specific settings if needed (e.g., for `make run-dev`).
 
 ## Development Commands
 
-Ensure your virtual environment is activated (`source .venv/bin/activate`) before running these `make` commands from the `indexing-mcp` project root:
+Ensure your virtual environment is activated (`source .venv/bin/activate`) before running these `make` commands from the `vector-index-mcp` project root:
 
 *   `make test`: Run the test suite using `pytest`.
 *   `make lint`: Check code style and format using `ruff`.
-*   `make run-dev`: Start the development server with auto-reload. Uses the `.env` file in the `indexing-mcp` root if present.
+*   `make run-dev`: Start the development server with auto-reload. Uses the `.env` file in the `vector-index-mcp` root if present.
 *   `make clean`: Remove temporary files (`__pycache__`, build artifacts, etc.).
 *   `make help`: Display a list of available commands.
 
@@ -206,17 +206,17 @@ The server exposes the following HTTP endpoints:
 ### 5. Project structure
 ```mermaid
 graph TD
-    CLI["index_mcp/cli.py"]
-    DEP["index_mcp/dependencies.py"]
-    CE["index_mcp/content_extractor.py"]
-    FW["index_mcp/file_watcher.py"]
-    IND["index_mcp/indexer.py"]
-    MAIN["index_mcp/main.py"]
-    MCP["index_mcp/mcp_server.py"]
-    MOD["index_mcp/models.py"]
-    RI["index_mcp/routers/index.py"]
-    RS["index_mcp/routers/search.py"]
-    RST["index_mcp/routers/status.py"]
+    CLI["vector_index_mcp/cli.py"]
+    DEP["vector_index_mcp/dependencies.py"]
+    CE["vector_index_mcp/content_extractor.py"]
+    FW["vector_index_mcp/file_watcher.py"]
+    IND["vector_index_mcp/indexer.py"]
+    MAIN["vector_index_mcp/main.py"]
+    MCP["vector_index_mcp/mcp_server.py"]
+    MOD["vector_index_mcp/models.py"]
+    RI["vector_index_mcp/routers/index.py"]
+    RS["vector_index_mcp/routers/search.py"]
+    RST["vector_index_mcp/routers/status.py"]
     TAPI["tests/test_api.py"]
 
     CLI --> MAIN;
