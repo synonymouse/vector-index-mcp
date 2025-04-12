@@ -201,3 +201,41 @@ The server exposes the following HTTP endpoints:
         "indexed_chunk_count": null,
         "error_message": "Status requested for a path not managed by this server instance."
     }
+
+
+### 5. Project structure
+```mermaid
+graph TD
+    CLI["index_mcp/cli.py"]
+    DEP["index_mcp/dependencies.py"]
+    CE["index_mcp/content_extractor.py"]
+    FW["index_mcp/file_watcher.py"]
+    IND["index_mcp/indexer.py"]
+    MAIN["index_mcp/main.py"]
+    MCP["index_mcp/mcp_server.py"]
+    MOD["index_mcp/models.py"]
+    RI["index_mcp/routers/index.py"]
+    RS["index_mcp/routers/search.py"]
+    RST["index_mcp/routers/status.py"]
+    TAPI["tests/test_api.py"]
+
+    CLI --> MAIN;
+
+    MAIN --> RI;
+    MAIN --> RS;
+    MAIN --> RST;
+    MAIN --> MCP;
+    MAIN --> MOD;
+    MAIN --> DEP;
+
+    MCP --> MOD;
+
+    IND --> MOD;
+
+    RI --> MOD;
+    RS --> MOD;
+    RST --> MOD;
+
+    TAPI --> MAIN;
+    TAPI --> MOD;
+```
