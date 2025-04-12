@@ -2,22 +2,19 @@ import threading
 import time
 import datetime
 import logging
-from typing import List, Optional
-from pathlib import Path
+from typing import Optional
 
-from dotenv import load_dotenv
 
-from indexer import Indexer
-from file_watcher import FileWatcher
-from models import Settings
+from .indexer import Indexer
+from .file_watcher import FileWatcher
+from .models import Settings
 
 log = logging.getLogger(__name__)
 
-# Load environment variables early if Settings relies on them at import time
-load_dotenv()
 
 class MCPServer:
     """Core class managing indexing state, file watching, and scanning logic."""
+
     def __init__(self):
         self.settings = Settings()
         self.indexer = Indexer(self.settings)
@@ -51,8 +48,9 @@ class MCPServer:
         )
         self.watcher_thread.start()
         self.status = "Watching"
-        log.info("File watcher thread started. Initial scan required via /index endpoint.")
-
+        log.info(
+            "File watcher thread started. Initial scan required via /index endpoint."
+        )
 
     def _perform_scan(self, project_path: str, force_reindex: bool):
         """Internal method to run the indexing scan."""
@@ -81,26 +79,28 @@ class MCPServer:
                 log.info(f"Index cleared for {project_path}.")
 
             log.info(f"Running initial scan for {project_path}...")
-            self.file_watcher.initial_scan() # This blocks until scan is done
+            self.file_watcher.initial_scan()  # This blocks until scan is done
             self.last_scan_end_time = time.time()
-            self.status = "Watching" # Assume continuous watching after scan
+            self.status = "Watching"  # Assume continuous watching after scan
             log.info(f"Scan completed for {project_path} at {datetime.datetime.now()}")
 
         except Exception as e:
             self.status = "Error"
             self.current_error = f"Indexing failed: {str(e)}"
             self.last_scan_end_time = time.time()
-            log.error(
-                f"ERROR during scan for {project_path}: {e}", exc_info=True
-            )
+            log.error(f"ERROR during scan for {project_path}: {e}", exc_info=True)
 
     def shutdown(self):
         """Cleanup resources on shutdown."""
         log.info("Shutting down MCPServer...")
-        if hasattr(self, 'file_watcher') and self.file_watcher:
+        if hasattr(self, "file_watcher") and self.file_watcher:
             self.file_watcher.stop()
             log.info("File watcher stopped.")
-        if hasattr(self, 'watcher_thread') and self.watcher_thread and self.watcher_thread.is_alive():
+        if (
+            hasattr(self, "watcher_thread")
+            and self.watcher_thread
+            and self.watcher_thread.is_alive()
+        ):
             self.watcher_thread.join(timeout=2)
             if self.watcher_thread.is_alive():
                 log.warning("Watcher thread did not exit cleanly.")

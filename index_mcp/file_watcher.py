@@ -1,19 +1,20 @@
 import os
 import hashlib
 import logging
-import json
 from pathlib import Path
 import pathspec
 from typing import List, Dict, TypedDict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from indexer import Indexer
-from models import IndexedDocument, FileMetadata
-from content_extractor import chunk_content
+from .indexer import Indexer
+from .models import IndexedDocument, FileMetadata
+from .content_extractor import chunk_content
+
 
 class KnownFileInfo(TypedDict):
     """Structure for storing info about known files."""
+
     hash: str
     last_modified: float
 
@@ -95,7 +96,6 @@ class FileWatcher:
                 # Ensure any previous index entries are removed if the file became empty
                 self.indexer.remove_document(file_path)
                 return True
-
 
             for i, chunk_text in enumerate(chunks):
                 chunk_doc_id = f"{file_path}::{i}"

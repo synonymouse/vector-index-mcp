@@ -3,10 +3,13 @@ from pydantic import BaseModel, Field
 from lancedb.pydantic import LanceModel, Vector
 import os
 
+
 class FileMetadata(BaseModel):
     """Metadata specifically for tracking the original file path."""
+
     original_path: str = Field(..., description="The original path of the indexed file")
-   
+
+
 class IndexedDocument(LanceModel):
     document_id: str = Field(
         ..., description="Unique identifier for the document chunk"

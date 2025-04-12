@@ -1,11 +1,10 @@
 import logging
-import json
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
-from models import SearchRequest, SearchResponse, SearchResultItem, FileMetadata
-from main import get_server_instance
-from mcp_server import MCPServer
+from ..models import SearchRequest, SearchResponse, SearchResultItem, FileMetadata
+from ..dependencies import get_server_instance
+from ..mcp_server import MCPServer
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,7 +19,8 @@ async def search_documents(
     # Use the injected instance
     if server_instance.status == "Scanning":
         raise HTTPException(
-            status_code=409, detail="Search unavailable: Indexing is currently in progress."
+            status_code=409,
+            detail="Search unavailable: Indexing is currently in progress.",
         )
     if server_instance.status == "Error":
         raise HTTPException(
@@ -41,11 +41,13 @@ async def search_documents(
 
         processed_results: List[SearchResultItem] = []
         for doc in raw_results:
-            metadata_obj = doc.get('metadata')
+            metadata_obj = doc.get("metadata")
             # Basic check: LanceDB might return dicts, ensure it's usable.
             if not isinstance(metadata_obj, (dict, FileMetadata)):
-                 log.warning(f"Unexpected metadata format for doc_id {doc.get('document_id')}: {type(metadata_obj)}")
-                 metadata_obj = FileMetadata(original_path="<metadata error>")
+                log.warning(
+                    f"Unexpected metadata format for doc_id {doc.get('document_id')}: {type(metadata_obj)}"
+                )
+                metadata_obj = FileMetadata(original_path="<metadata error>")
 
             processed_results.append(
                 SearchResultItem(
@@ -61,5 +63,7 @@ async def search_documents(
         return SearchResponse(results=processed_results)
     except Exception as e:
         # Keep existing error handling
-        log.error(f"Search failed for query '{request.query[:50]}...': {e}", exc_info=True)
+        log.error(
+            f"Search failed for query '{request.query[:50]}...': {e}", exc_info=True
+        )
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

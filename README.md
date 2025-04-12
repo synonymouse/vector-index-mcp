@@ -4,76 +4,97 @@ This project provides a Model Context Protocol (MCP) server designed to index so
 
 For detailed design and architectural decisions, please refer to [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Setup
+## Usage (End Users)
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <your-repository-url>
-    cd <repository-directory>
-    ```
+This server is designed to be run easily within the directory of the software project you want to index.
 
-2.  **Create and activate a Python virtual environment:**
-    ```bash
-    python -m venv venv
-    # On Windows
-    .\venv\Scripts\activate
-    # On macOS/Linux
-    source venv/bin/activate
-    ```
+### 1. Install `pipx` (One-time Setup)
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+`pipx` allows running Python applications in isolated environments. If you don't have it, install it:
 
-4.  **Install development dependencies (for running tests):**
-    ```bash
-    pip install -r requirements-dev.txt
-    ```
+```bash
+pip install pipx
+pipx ensurepath
+# Restart your terminal after running ensurepath if the command isn't found
+```
 
-## Configuration
+### 2. Configure the Server
 
-The server requires environment variables for configuration. Create a `.env` file in the project root directory:
+Navigate to the root directory of the software project you wish to index. Create a `.env` file in this directory with the following content:
 
 ```dotenv
 # --- Required ---
-# Path to the software project you want to index
-PROJECT_PATH=/path/to/your/software/project
+# Path to the software project you want to index (use '.' for the current directory)
+PROJECT_PATH=.
 
 # --- Optional (Defaults Provided) ---
-# URI for the LanceDB database. Can be a local path.
+# URI for the LanceDB database. './.lancedb' stores it within your project folder.
 LANCEDB_URI=./.lancedb
 
 # Name of the Sentence Transformer model to use for embeddings
 EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
 
-# Comma-separated list of glob patterns to ignore during indexing
-# Example: IGNORE_PATTERNS=*.log,*.tmp,__pycache__/*,node_modules/*,.git/*
-IGNORE_PATTERNS=__pycache__/*,.git/*,*.db
+# Comma-separated list of glob patterns to ignore (relative to PROJECT_PATH)
+# Example: IGNORE_PATTERNS=*.log,*.tmp,node_modules/*,.git/*,dist/*
+IGNORE_PATTERNS=__pycache__/*,.git/*,*.db,*.pyc,build/*,dist/*
 
-# Host and Port for the server
+# Host and Port for the server (rarely need changing for local use)
 HOST=0.0.0.0
 PORT=8000
 ```
 
 **Explanation:**
 
-*   `PROJECT_PATH`: **Required.** Absolute or relative path to the root directory of the project to be indexed.
-*   `LANCEDB_URI`: Path where the LanceDB vector database will be stored. Defaults to `./.lancedb`.
-*   `EMBEDDING_MODEL_NAME`: The Hugging Face Sentence Transformer model used for generating embeddings. Defaults to `all-MiniLM-L6-v2`. Other models might require installing different dependencies.
-*   `IGNORE_PATTERNS`: Comma-separated list of glob patterns specifying files/directories to exclude from indexing. Defaults to `__pycache__/*,.git/*,*.db`.
+*   `PROJECT_PATH`: **Required.** Set this to `.` to index the current directory where you run the server.
+*   `LANCEDB_URI`: Path where the LanceDB vector database will be stored. Using `./.lancedb` keeps the index data within your project directory. Defaults to `./.lancedb`.
+*   `EMBEDDING_MODEL_NAME`: The Hugging Face Sentence Transformer model used for generating embeddings. Defaults to `all-MiniLM-L6-v2`.
+*   `IGNORE_PATTERNS`: Comma-separated list of glob patterns specifying files/directories to exclude from indexing, relative to `PROJECT_PATH`. Defaults are provided.
 *   `HOST`: Host address for the server. Defaults to `0.0.0.0`.
 *   `PORT`: Port for the server. Defaults to `8000`.
 
-## Running the Server
+### 3. Run the Server
 
-Ensure your `.env` file is configured correctly and your virtual environment is activated.
+From the root directory of your software project (where the `.env` file is located), run:
 
 ```bash
-uvicorn mcp_server:app --reload --host $HOST --port $PORT
+pipx run index-mcp
 ```
 
-The server will start, initialize the indexer (potentially performing an initial scan if the database is new or empty), and begin watching the `PROJECT_PATH` for changes.
+`pipx` will automatically download the server, install its dependencies in an isolated environment, and start it. The server will use the `.env` file in your current directory for configuration, begin watching the `PROJECT_PATH` for changes, and create the LanceDB database at `LANCEDB_URI`.
+
+You may need to trigger an initial scan via the API if the index is empty (see API Endpoints).
+
+## Development Setup
+
+If you want to contribute to or modify the server itself:
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <your-repository-url> # TODO: Update URL
+    cd indexing-mcp
+    ```
+2.  **Set up the development environment:**
+    This command creates a virtual environment (`.venv`), installs all required dependencies (runtime and development), including `ruff` for linting/formatting.
+    ```bash
+    make install-dev
+    ```
+3.  **Activate the virtual environment:**
+    ```bash
+    source .venv/bin/activate
+    ```
+    (On Windows using Git Bash or WSL, the command is the same. For Command Prompt/PowerShell, use `.venv\Scripts\activate`)
+
+4.  **(Optional) Create a `.env` file in the `indexing-mcp` project root** for development-specific settings if needed (e.g., for `make run-dev`).
+
+## Development Commands
+
+Ensure your virtual environment is activated (`source .venv/bin/activate`) before running these `make` commands from the `indexing-mcp` project root:
+
+*   `make test`: Run the test suite using `pytest`.
+*   `make lint`: Check code style and format using `ruff`.
+*   `make run-dev`: Start the development server with auto-reload. Uses the `.env` file in the `indexing-mcp` root if present.
+*   `make clean`: Remove temporary files (`__pycache__`, build artifacts, etc.).
+*   `make help`: Display a list of available commands.
 
 ## API Endpoints
 
@@ -95,24 +116,24 @@ The server exposes the following HTTP endpoints:
 
 *   **Method:** `POST`
 *   **Path:** `/index`
-*   **Description:** Triggers a full re-indexing of the configured `PROJECT_PATH`. This can be useful if you suspect the index is out of sync or after changing ignore patterns.
+*   **Description:** Triggers a full re-indexing of the configured `PROJECT_PATH`. Use `force_reindex: true` to clear the existing index first.
 *   **Example Request Body:**
     ```json
     {
-      "project_path": "/path/to/your/software/project" // Optional, defaults to PROJECT_PATH from .env
+      "project_path": ".", // Must match PROJECT_PATH from .env
+      "force_reindex": false
     }
     ```
-*   **Example Response (200 OK):**
+*   **Example Response (202 Accepted):**
     ```json
     {
-      "message": "Indexing started for project: /path/to/your/software/project",
-      "files_queued": 150
+      "message": "Indexing process initiated for . in the background."
     }
     ```
-*   **Example Response (400 Bad Request):**
+*   **Example Response (409 Conflict):**
     ```json
     {
-      "detail": "Project path mismatch or not configured."
+        "detail": "An indexing scan is already in progress."
     }
     ```
 
@@ -125,32 +146,31 @@ The server exposes the following HTTP endpoints:
     ```json
     {
       "query": "How is user authentication handled?",
-      "project_path": "/path/to/your/software/project", // Optional, defaults to PROJECT_PATH from .env
       "top_k": 5 // Optional, defaults to 5
     }
     ```
 *   **Example Response (200 OK):**
     ```json
     {
-      "query": "How is user authentication handled?",
-      "results": [
-        {
-          "file_path": "src/auth/service.py",
-          "score": 0.85,
-          "content_preview": "... uses JWT tokens for authentication ..."
-        },
-        {
-          "file_path": "docs/auth.md",
-          "score": 0.78,
-          "content_preview": "... Authentication Flow: User logs in -> Receives JWT ..."
-        }
-      ]
+        "results": [
+            {
+                "document_id": "path/to/file.py::0",
+                "file_path": "path/to/file.py",
+                "content_hash": "...",
+                "last_modified_timestamp": 1678886400.0,
+                "extracted_text_chunk": "... relevant text chunk ...",
+                "metadata": {
+                    "original_path": "path/to/file.py"
+                }
+            }
+            // ... more results
+        ]
     }
     ```
-*   **Example Response (404 Not Found):**
+*   **Example Response (503 Service Unavailable):**
     ```json
     {
-      "detail": "Index not found for project path: /path/to/your/software/project. Please index first."
+        "detail": "Search unavailable: Index not yet built or server initializing."
     }
     ```
 
@@ -158,30 +178,26 @@ The server exposes the following HTTP endpoints:
 
 *   **Method:** `GET`
 *   **Path:** `/status/{project_path:path}`
-*   **Description:** Retrieves the current indexing status for the specified project path. The project path must be URL-encoded if it contains special characters.
-*   **Example Request:** `GET /status/%2Fpath%2Fto%2Fyour%2Fsoftware%2Fproject`
+*   **Description:** Retrieves the current indexing status for the specified project path (must match the configured `PROJECT_PATH`). The project path must be URL-encoded if it contains special characters (e.g., `.` becomes `%2E`).
+*   **Example Request:** `GET /status/%2E` (for `PROJECT_PATH=.`)
 *   **Example Response (200 OK):**
     ```json
     {
-      "project_path": "/path/to/your/software/project",
-      "status": "idle", // or "indexing", "watching"
-      "last_indexed_count": 150,
-      "last_indexed_time": "2025-04-10T14:30:00Z",
-      "error": null // or error message if indexing failed
+      "project_path": ".",
+      "status": "Watching", // or "Scanning", "Error", "Idle - Initial Scan Required"
+      "last_scan_start_time": 1678886400.0,
+      "last_scan_end_time": 1678886460.0,
+      "indexed_chunk_count": 150,
+      "error_message": null
     }
     ```
 *   **Example Response (404 Not Found):**
     ```json
     {
-      "detail": "Status not found for project path: /path/to/nonexistent/project"
+        "project_path": "/some/other/path",
+        "status": "Not Found",
+        "last_scan_start_time": null,
+        "last_scan_end_time": null,
+        "indexed_chunk_count": null,
+        "error_message": "Status requested for a path not managed by this server instance."
     }
-    ```
-
-## Running Tests
-
-Ensure you have installed the development dependencies (`requirements-dev.txt`).
-
-From the project root directory:
-
-```bash
-pytest -v

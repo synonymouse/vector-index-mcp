@@ -5,7 +5,7 @@ import lancedb
 import pyarrow as pa
 import numpy as np
 import sentence_transformers
-from models import (
+from .models import (
     IndexedDocument,
     Settings,
 )
@@ -16,12 +16,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+
 class FileMetadataDict(TypedDict):
     """Represents the FileMetadata model when serialized to a dict."""
+
     original_path: str
+
 
 class SearchResultDict(TypedDict):
     """Represents the structure of a single search result dict returned by indexer.search."""
+
     document_id: str
     file_path: str
     content_hash: str
@@ -61,11 +65,11 @@ class Indexer:
             raise  # Re-raise critical error
 
         self.table_name = "documents"
- 
+
         # --- Schema Definition and Table Creation ---
         # Schema is now inferred directly from the IndexedDocument LanceModel.
         # LanceDB handles schema creation/validation when using LanceModel.
-        log.info(f"Using schema inferred from IndexedDocument model.")
+        log.info("Using schema inferred from IndexedDocument model.")
 
         try:
             # Attempt to open the table. LanceDB might perform basic checks.
@@ -129,9 +133,7 @@ class Indexer:
             )
             # Configure index parameters if needed (e.g., num_partitions, num_sub_vectors)
             # Example: self.table.create_index(vector_column_name="vector", replace=replace, metric="cosine", num_partitions=256, num_sub_vectors=96)
-            self.table.create_index(
-                vector_column_name="vector", replace=replace
-            )
+            self.table.create_index(vector_column_name="vector", replace=replace)
             log.info(
                 f"Successfully created/verified vector index on '{self.table_name}'."
             )
@@ -208,7 +210,9 @@ class Indexer:
 
             pydantic_results = search_result.to_pydantic(IndexedDocument)
 
-            typed_results: List[SearchResultDict] = [doc.model_dump() for doc in pydantic_results]
+            typed_results: List[SearchResultDict] = [
+                doc.model_dump() for doc in pydantic_results
+            ]
             log.info(
                 f"Search for '{query_text[:50]}...' returned {len(typed_results)} results."
             )

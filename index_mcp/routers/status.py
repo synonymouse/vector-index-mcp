@@ -3,9 +3,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 
 # Import models and dependency provider
-from models import IndexingStatusResponse
-from main import get_server_instance  # Import dependency function from main.py
-from mcp_server import MCPServer  # Import type hint for MCPServer
+from ..models import IndexingStatusResponse
+from ..dependencies import get_server_instance
+from ..mcp_server import MCPServer
 
 log = logging.getLogger(__name__)
 router = APIRouter()

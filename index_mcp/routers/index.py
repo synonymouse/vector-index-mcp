@@ -2,15 +2,17 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 
 # Import models and dependency provider from main
-from models import IndexRequest
-from main import get_server_instance # Import dependency function
-from mcp_server import MCPServer # Import type hint for MCPServer
+from ..models import IndexRequest
+from ..dependencies import get_server_instance
+from ..mcp_server import MCPServer
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/index", tags=["Indexing"], status_code=202) # Use 202 Accepted for background tasks
+@router.post(
+    "/index", tags=["Indexing"], status_code=202
+)  # Use 202 Accepted for background tasks
 async def trigger_index(
     request: IndexRequest,
     background_tasks: BackgroundTasks,

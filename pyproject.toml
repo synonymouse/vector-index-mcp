@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "index-mcp"
+version = "0.1.0"
+description = "MCP Server for Software Project Indexing & Semantic Search"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"} # Or specify your license
+authors = [
+  { name="Your Name", email="your.email@example.com" }, # TODO: Update author details
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License", # Adjust if needed
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Indexing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "watchdog",
+    "sentence-transformers",
+    "transformers",
+    "lancedb",
+    "python-dotenv",
+    "pydantic",
+    "tiktoken",
+    "pathspec",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/indexing-mcp" # TODO: Update URL
+"Bug Tracker" = "https://github.com/yourusername/indexing-mcp/issues" # TODO: Update URL
+
+[project.scripts]
+index-mcp = "index_mcp.cli:main"

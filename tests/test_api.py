@@ -10,8 +10,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from main import app
-from models import FileMetadata
+from index_mcp.main import app
+from index_mcp.models import FileMetadata
 
 TESTS_DIR = Path(__file__).parent
 TEST_PROJECT_DIR = TESTS_DIR / "test_project"
@@ -42,27 +42,27 @@ def test_server_instance(monkeypatch):
     monkeypatch.setenv("LANCEDB_PATH", str(TEST_LANCEDB_PATH.resolve()))
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
-    from mcp_server import MCPServer
+    from index_mcp.mcp_server import MCPServer
+
     test_server_instance = MCPServer()
 
-    with patch("main.mcp_server_instance", test_server_instance), \
-         patch.object(test_server_instance, 'status', "Initializing", create=True), \
-         patch.object(test_server_instance, 'file_watcher', None, create=True), \
-         patch.object(test_server_instance, 'indexer', None, create=True):
-         # Note: We don't need to patch settings or project_path on the instance itself
-         # because the test_server_instance was created *with* the correct settings
-         # due to the monkeypatched environment variables.
+    with patch("index_mcp.dependencies.mcp_server_instance", test_server_instance), patch.object(
+        test_server_instance, "status", "Initializing", create=True
+    ), patch.object(
+        test_server_instance, "file_watcher", None, create=True
+    ), patch.object(test_server_instance, "indexer", None, create=True):
+        # Note: We don't need to patch settings or project_path on the instance itself
+        # because the test_server_instance was created *with* the correct settings
+        # due to the monkeypatched environment variables.
 
         yield test_server_instance
 
     # --- Teardown (after yield) ---
-    with patch("main.mcp_server_instance", None):
+    with patch("index_mcp.dependencies.mcp_server_instance", None):
         pass
 
 
-@pytest_asyncio.fixture(
-    scope="function"
-)
+@pytest_asyncio.fixture(scope="function")
 async def client():
     """Provides an HTTPX async client for testing the FastAPI app."""
     async with httpx.AsyncClient(
@@ -77,6 +77,7 @@ async def client():
 
 
 # --- Test Cases ---
+
 
 @pytest.mark.asyncio
 async def test_read_root(client: httpx.AsyncClient):
@@ -114,13 +115,15 @@ async def test_status_incorrect_path(client: httpx.AsyncClient, test_server_inst
 
 
 @pytest.mark.asyncio
-@patch("main.mcp_server_instance.indexer")
-async def test_status_chunk_count(mock_indexer, client: httpx.AsyncClient, test_server_instance):
+@patch("index_mcp.dependencies.mcp_server_instance.indexer")
+async def test_status_chunk_count(
+    mock_indexer, client: httpx.AsyncClient, test_server_instance
+):
     """Test status endpoint reports chunk count from indexer."""
     mock_indexer.get_indexed_chunk_count.return_value = 123
     settings = test_server_instance.settings
 
-    with patch("main.mcp_server_instance.status", "Watching"):
+    with patch("index_mcp.dependencies.mcp_server_instance.status", "Watching"):
         response = await client.get(f"/status/{settings.project_path}/")
 
     assert response.status_code == 200
@@ -133,13 +136,13 @@ async def test_status_chunk_count(mock_indexer, client: httpx.AsyncClient, test_
 
 @pytest.mark.asyncio
 @patch("fastapi.BackgroundTasks.add_task")
-@patch("main.mcp_server_instance.file_watcher")
+@patch("index_mcp.dependencies.mcp_server_instance.file_watcher")
 async def test_index_trigger(
     mock_file_watcher, mock_add_task, client: httpx.AsyncClient, test_server_instance
 ):
     """Test triggering the index endpoint successfully."""
     settings = test_server_instance.settings
-    with patch("main.mcp_server_instance.status", "Watching"):
+    with patch("index_mcp.dependencies.mcp_server_instance.status", "Watching"):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": False},
@@ -173,7 +176,7 @@ async def test_index_trigger(
 async def test_index_trigger_conflict(client: httpx.AsyncClient, test_server_instance):
     """Test triggering index endpoint when already scanning."""
     settings = test_server_instance.settings
-    with patch("main.mcp_server_instance.status", "Scanning"):
+    with patch("index_mcp.dependencies.mcp_server_instance.status", "Scanning"):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": False},
@@ -185,14 +188,18 @@ async def test_index_trigger_conflict(client: httpx.AsyncClient, test_server_ins
 
 @pytest.mark.asyncio
 @patch("fastapi.BackgroundTasks.add_task")
-@patch("main.mcp_server_instance.file_watcher")
-@patch("main.mcp_server_instance.indexer")
+@patch("index_mcp.dependencies.mcp_server_instance.file_watcher")
+@patch("index_mcp.dependencies.mcp_server_instance.indexer")
 async def test_index_trigger_force_reindex(
-    mock_indexer, mock_file_watcher, mock_add_task, client: httpx.AsyncClient, test_server_instance
+    mock_indexer,
+    mock_file_watcher,
+    mock_add_task,
+    client: httpx.AsyncClient,
+    test_server_instance,
 ):
     settings = test_server_instance.settings
     """Test triggering index with force_reindex=True."""
-    with patch("main.mcp_server_instance.status", "Watching"):
+    with patch("index_mcp.dependencies.mcp_server_instance.status", "Watching"):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": True},
@@ -213,7 +220,7 @@ async def test_index_trigger_force_reindex(
 
 
 @pytest.mark.asyncio
-@patch("main.mcp_server_instance.indexer")
+@patch("index_mcp.dependencies.mcp_server_instance.indexer")
 async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_instance):
     """Test the search endpoint."""
     mock_search_results = [
@@ -238,7 +245,7 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
     ]
     mock_indexer.search.return_value = mock_search_results
 
-    with patch("main.mcp_server_instance.status", "Watching"):
+    with patch("index_mcp.dependencies.mcp_server_instance.status", "Watching"):
         response = await client.post(
             "/search", json={"query": "test query", "top_k": 5}
         )
@@ -251,7 +258,7 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
         expected_item.pop("vector", None)
 
         if isinstance(expected_item["metadata"], FileMetadata):
-             expected_item["metadata"] = expected_item["metadata"].model_dump()
+            expected_item["metadata"] = expected_item["metadata"].model_dump()
         expected_api_results.append(expected_item)
     assert data["results"] == expected_api_results
     mock_indexer.search.assert_called_once_with(query_text="test query", top_k=5)
