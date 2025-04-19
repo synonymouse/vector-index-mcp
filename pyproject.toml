@@ -38,3 +38,11 @@ dependencies = [
 
 [project.scripts]
 vector-index-mcp = "vector_index_mcp.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+    "pytest-asyncio",
+    "ruff",
+]

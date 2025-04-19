@@ -23,14 +23,14 @@ help:
 
 # Setup development environment
 install-dev: $(VENV_DIR)/bin/activate
-$(VENV_DIR)/bin/activate: requirements.txt requirements-dev.txt
+$(VENV_DIR)/bin/activate: pyproject.toml
 	@echo "Setting up development environment in $(VENV_DIR)..."
 	test -d $(VENV_DIR) || python3 -m venv $(VENV_DIR)
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
-	$(PIP) install -r requirements-dev.txt
-	# Install ruff for linting/formatting if not already in requirements-dev.txt
-	$(PIP) list | grep -q ruff || $(PIP) install ruff
+	# Ensure pip is upgraded using the venv's python
+	$(PYTHON) -m pip install --upgrade pip
+	@echo "Installing project in editable mode with development dependencies..."
+	# Install dependencies using the venv's python/pip
+	$(PYTHON) -m pip install -e .[dev]
 	@echo "Development environment ready. Activate with: source $(VENV_DIR)/bin/activate"
 	@touch $(VENV_DIR)/bin/activate # Mark as updated
 

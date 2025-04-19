@@ -74,7 +74,7 @@ If you want to contribute to or modify the server itself:
     cd vector-index-mcp
     ```
 2.  **Set up the development environment:**
-    This command creates a virtual environment (`.venv`), installs all required dependencies (runtime and development), including `ruff` for linting/formatting.
+    This command creates a virtual environment (`.venv`) if it doesn't exist, and installs the project in editable mode (`-e`) along with all runtime and development dependencies specified in `pyproject.toml` (`.[dev]`).
     ```bash
     make install-dev
     ```
