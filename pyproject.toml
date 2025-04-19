@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "MCP Server for Software Project Indexing & Semantic Search"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"} # Or specify your license
+license = {text = "MIT"}
 authors = [
-  { name="Your Name", email="your.email@example.com" }, # TODO: Update author details
+  { name="Elisei Shchukin", email="yelis.chuk@gmail.com" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License", # Adjust if needed
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Indexing",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -33,8 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/vector-index-mcp" # TODO: Update URL
-"Bug Tracker" = "https://github.com/yourusername/vector-index-mcp/issues" # TODO: Update URL
+"Homepage" = "https://github.com/synonymouse/vector-index-mcp"
+"Bug Tracker" = "https://github.com/synonymouse/vector-index-mcp/issues"
 
 [project.scripts]
 vector-index-mcp = "vector_index_mcp.cli:main"
