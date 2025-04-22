@@ -3,8 +3,8 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
 from ..models import SearchRequest, SearchResponse, SearchResultItem, FileMetadata
-from ..dependencies import get_server_instance
-from ..mcp_server import MCPServer
+from .. import dependencies
+from ..mcp_server import MCPServer, ServerStatus
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -13,28 +13,31 @@ router = APIRouter()
 @router.post("/search", response_model=SearchResponse, tags=["Search"])
 async def search_documents(
     request: SearchRequest,
-    server_instance: MCPServer = Depends(get_server_instance),
+    server_instance: MCPServer = Depends(dependencies.get_server_instance),
 ):
     # NOTE: Search implicitly uses the index built for the configured project path.
-    # Use the injected instance
-    if server_instance.status == "Scanning":
+
+    if server_instance.status == ServerStatus.INITIALIZING:
         raise HTTPException(
-            status_code=409,
-            detail="Search unavailable: Indexing is currently in progress.",
+            status_code=503, detail="Server is initializing, please try again later."
         )
-    if server_instance.status == "Error":
-        raise HTTPException(
-            status_code=503,
-            detail=f"Search unavailable due to indexing error: {server_instance.current_error}",
+    elif server_instance.status == ServerStatus.ERROR:
+        error_msg = (
+            f"Server initialization failed: {server_instance.initialization_error}"
+            if server_instance.initialization_error
+            else "Server initialization failed."
         )
-    # Also check for the initial state before the first scan
-    if server_instance.status in ["Initializing", "Idle - Initial Scan Required"]:
-        raise HTTPException(
-            status_code=503,
-            detail="Search unavailable: Index not yet built or server initializing.",
-        )
+        raise HTTPException(status_code=500, detail=error_msg)
+    # Only proceed if status is READY (implicitly, as other states raise exceptions)
 
     try:
+        # Ensure indexer exists before trying to search (it should if status is READY)
+        if not server_instance.indexer:
+            raise HTTPException(
+                status_code=500,
+                detail="Indexer not available despite server being ready.",
+            )
+
         raw_results = server_instance.indexer.search(
             query_text=request.query, top_k=request.top_k
         )

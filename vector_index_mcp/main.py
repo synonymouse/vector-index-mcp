@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from fastapi import FastAPI
 
 from .mcp_server import MCPServer
@@ -33,11 +34,13 @@ async def startup_event():
     # No longer need global here, we'll modify the imported module's variable
     log.info("Application startup event triggered. Initializing MCPServer...")
     try:
-        dependencies.mcp_server_instance = MCPServer() # Assign to the instance in dependencies module
-        log.info("MCPServer instance initialized successfully.")
+        dependencies.mcp_server_instance = MCPServer()
+        # Start the potentially long-running initialization in the background
+        asyncio.create_task(dependencies.mcp_server_instance._initialize_dependencies())
+        log.info("MCPServer instance created. Background initialization started.")
     except Exception as e:
         log.critical(
-            f"Failed to initialize MCPServer during startup: {e}", exc_info=True
+            f"Failed to create MCPServer instance during startup: {e}", exc_info=True
         )
         # Depending on severity, you might want to prevent the app from fully starting
         # or raise an error here. For now, we log critically.

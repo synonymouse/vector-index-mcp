@@ -1,10 +1,10 @@
 import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from ..mcp_server import MCPServer, ServerStatus
+from .. import dependencies
 
 # Import models and dependency provider from main
 from ..models import IndexRequest
-from ..dependencies import get_server_instance
-from ..mcp_server import MCPServer
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,7 +16,7 @@ router = APIRouter()
 async def trigger_index(
     request: IndexRequest,
     background_tasks: BackgroundTasks,
-    server_instance: MCPServer = Depends(get_server_instance),
+    server_instance: MCPServer = Depends(dependencies.get_server_instance),
 ):
     """
     Triggers the indexing process for the configured project path.
@@ -38,10 +38,21 @@ async def trigger_index(
 
     path_to_index = server_instance.project_path  # Explicitly use configured path
 
-    # Check if a scan is already in progress
-    if server_instance.status == "Scanning":
+    # Check server readiness before proceeding
+    if server_instance.status == ServerStatus.INITIALIZING:
         raise HTTPException(
-            status_code=409, detail="An indexing scan is already in progress."
+            status_code=503, detail="Server is initializing, please try again later."
+        )
+    elif server_instance.status == ServerStatus.ERROR:
+        error_msg = (
+            f"Server initialization failed: {server_instance.initialization_error}"
+            if server_instance.initialization_error
+            else "Server initialization failed."
+        )
+        raise HTTPException(status_code=500, detail=error_msg)
+    elif server_instance.status == ServerStatus.SCANNING:
+        raise HTTPException(
+            status_code=409, detail="A scan is already in progress."
         )
 
     force_reindex = request.force_reindex

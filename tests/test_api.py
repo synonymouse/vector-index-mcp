@@ -1,16 +1,17 @@
-import pytest
-import pytest_asyncio
-import httpx
 import os
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
+import httpx
+import pytest
+import pytest_asyncio
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from vector_index_mcp.main import app
+from vector_index_mcp.mcp_server import ServerStatus
 from vector_index_mcp.models import FileMetadata
 
 TESTS_DIR = Path(__file__).parent
@@ -46,8 +47,10 @@ def test_server_instance(monkeypatch):
 
     test_server_instance = MCPServer()
 
-    with patch("vector_index_mcp.dependencies.mcp_server_instance", test_server_instance), patch.object(
-        test_server_instance, "status", "Initializing", create=True
+    with patch(
+        "vector_index_mcp.dependencies.mcp_server_instance", test_server_instance
+    ), patch.object(
+        test_server_instance, "status", ServerStatus.INITIALIZING, create=True
     ), patch.object(
         test_server_instance, "file_watcher", None, create=True
     ), patch.object(test_server_instance, "indexer", None, create=True):
@@ -66,7 +69,7 @@ def test_server_instance(monkeypatch):
 async def client():
     """Provides an HTTPX async client for testing the FastAPI app."""
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver", follow_redirects=True
     ) as ac:
         # Ensure server startup event runs if needed for initialization
         # This might be implicitly handled by AsyncClient or require explicit call
@@ -94,10 +97,10 @@ async def test_read_root(client: httpx.AsyncClient):
 async def test_status_initial(client: httpx.AsyncClient, test_server_instance):
     """Test initial status endpoint (assuming INITIALIZING from patch)."""
     settings = test_server_instance.settings
-    response = await client.get(f"/status/{settings.project_path}/")
+    response = await client.get(f"/status/{settings.project_path}")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "Initializing"
+    assert data["status"] == ServerStatus.INITIALIZING.name
     assert data["project_path"] == settings.project_path
     assert "indexed_chunk_count" in data
 
@@ -107,11 +110,10 @@ async def test_status_incorrect_path(client: httpx.AsyncClient, test_server_inst
     """Test status endpoint with an incorrect project path."""
     incorrect_path = "nonexistent%2Fpath"
     response = await client.get(f"/status/{incorrect_path}")
-    assert response.status_code == 200
+    assert response.status_code == 404
     data = response.json()
-    assert data["status"] == "Not Found"
-    assert data["project_path"] == incorrect_path.replace("%2F", "/")
-    assert "not managed by this server instance" in data["error_message"]
+    assert "detail" in data
+    assert "Project path not found or not managed by this server" in data["detail"]
 
 
 @pytest.mark.asyncio
@@ -123,12 +125,12 @@ async def test_status_chunk_count(
     mock_indexer.get_indexed_chunk_count.return_value = 123
     settings = test_server_instance.settings
 
-    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", "Watching"):
-        response = await client.get(f"/status/{settings.project_path}/")
+    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", ServerStatus.WATCHING):
+        response = await client.get(f"/status/{settings.project_path}")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "Watching"
+    assert data["status"] == ServerStatus.WATCHING.name
     assert data["project_path"] == settings.project_path
     assert data["indexed_chunk_count"] == 123
     mock_indexer.get_indexed_chunk_count.assert_called_once()
@@ -142,7 +144,7 @@ async def test_index_trigger(
 ):
     """Test triggering the index endpoint successfully."""
     settings = test_server_instance.settings
-    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", "Watching"):
+    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", ServerStatus.WATCHING):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": False},
@@ -176,7 +178,7 @@ async def test_index_trigger(
 async def test_index_trigger_conflict(client: httpx.AsyncClient, test_server_instance):
     """Test triggering index endpoint when already scanning."""
     settings = test_server_instance.settings
-    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", "Scanning"):
+    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", ServerStatus.SCANNING):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": False},
@@ -199,7 +201,7 @@ async def test_index_trigger_force_reindex(
 ):
     settings = test_server_instance.settings
     """Test triggering index with force_reindex=True."""
-    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", "Watching"):
+    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", ServerStatus.WATCHING):
         response = await client.post(
             "/index",
             json={"project_path": settings.project_path, "force_reindex": True},
@@ -245,7 +247,7 @@ async def test_search(mock_indexer, client: httpx.AsyncClient, test_server_insta
     ]
     mock_indexer.search.return_value = mock_search_results
 
-    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", "Watching"):
+    with patch("vector_index_mcp.dependencies.mcp_server_instance.status", ServerStatus.WATCHING):
         response = await client.post(
             "/search", json={"query": "test query", "top_k": 5}
         )

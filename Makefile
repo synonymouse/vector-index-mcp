@@ -42,7 +42,7 @@ test: $(VENV_DIR)/bin/activate
 # Run linter/formatter
 lint: $(VENV_DIR)/bin/activate
 	@echo "Running linter and formatter (ruff)..."
-	$(PYTHON) -m ruff check .
+	$(PYTHON) -m ruff check . --fix
 	$(PYTHON) -m ruff format .
 
 # Run development server

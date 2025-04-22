@@ -1,11 +1,13 @@
 import logging
-from pathlib import Path
-from fastapi import APIRouter, Depends
+import os
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from .. import dependencies
+from ..mcp_server import MCPServer, ServerStatus
 
 # Import models and dependency provider
 from ..models import IndexingStatusResponse
-from ..dependencies import get_server_instance
-from ..mcp_server import MCPServer
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,64 +20,55 @@ router = APIRouter()
 )
 async def get_indexing_status(
     project_path: str,
-    server_instance: MCPServer = Depends(get_server_instance),
+    server_instance: MCPServer = Depends(dependencies.get_server_instance),
 ):
     """
-    Gets the current indexing status for the specified project path.
-    NOTE: This endpoint currently only returns status for the single project path
-    defined in the server's settings. Returns 'Not Found' status for other paths.
+    Gets the current status of the MCP server instance for the specified project path.
+
+    Returns the status if the `project_path` matches the server's configuration.
+    Otherwise, returns a 404 Not Found error.
     """
-    # URL decode might be needed if paths have special chars, FastAPI handles :path well
-    # Normalize both paths for robust comparison
-    try:
-        # Use the injected instance's project path
-        requested_path_norm = Path(project_path).resolve()
-        server_path_norm = Path(server_instance.project_path).resolve()
-    except Exception as e:
-        # Handle potential errors during path resolution (e.g., invalid path chars)
-        log.warning(f"Could not resolve requested path '{project_path}': {e}")
-        # Return 'Not Found' or a more specific error like 400 Bad Request
-        return IndexingStatusResponse(
-            project_path=project_path,
-            status="Error",
-            error_message=f"Invalid project path provided: {project_path}",
+    # Validate project path by comparing absolute paths
+    req_abs_path = os.path.abspath(project_path)
+    srv_abs_path = os.path.abspath(server_instance.settings.project_path)
+    if req_abs_path != srv_abs_path:
+        log.warning(f"Path mismatch: Request='{req_abs_path}', Server='{srv_abs_path}'")
+        raise HTTPException(
+            status_code=404,
+            detail="Project path not found or not managed by this server.",
         )
 
-    # Check if the requested path matches the server's configured path
-    if requested_path_norm != server_path_norm:
-        # Construct the response using the current state from the injected MCPServer instance
-        return IndexingStatusResponse(
-            project_path=project_path,
-            status="Not Found",
-            error_message="Status requested for a path not managed by this server instance.",
-        )
+    chunk_count = None
+    error_msg = None
 
-    # Get chunk count for the configured path using the injected instance
-    chunk_count = None  # Default to None
-    if server_instance.status not in [
-        "Initializing",
-        "Error",
-        "Scanning",
-        "Idle - Initial Scan Required",
-    ]:
-        # Only query count if index is expected to be stable/ready (i.e., 'Watching' or post-initial scan)
+    if server_instance.indexer:
         try:
-            # Access indexer via the injected server instance
-            chunk_count = server_instance.indexer.get_indexed_chunk_count(
-                server_instance.project_path
-            )
+            chunk_count = server_instance.indexer.get_indexed_chunk_count()
         except Exception as e:
-            # Handle potential errors during count retrieval
             log.error(f"Error getting chunk count for status: {e}")
-            # Optionally update server status or error message here
-            server_instance.current_error = f"Failed to retrieve chunk count: {e}"
+            # Reflect this as an issue, maybe set status to ERROR? For now, just log.
+            error_msg = f"Failed to retrieve chunk count: {e}"
+
+    # Determine error message based on status if not already set by chunk count retrieval
+    if error_msg is None:
+        if server_instance.status == ServerStatus.READY and not server_instance.indexer:
+            log.error("Server status is READY but indexer is not available.")
+            error_msg = (
+                "Server is READY but indexer is missing."  # Indicate inconsistency
+            )
+        elif server_instance.status == ServerStatus.ERROR:
+            error_msg = (
+                str(server_instance.initialization_error)
+                if server_instance.initialization_error
+                else "Unknown server error."
+            )
 
     # Construct the response using the current state from the MCPServer instance
     return IndexingStatusResponse(
-        project_path=server_instance.project_path,
-        status=server_instance.status,
+        project_path=server_instance.settings.project_path, # Always return the configured path
+        status=server_instance.status.name if isinstance(server_instance.status, ServerStatus) else server_instance.status,
         last_scan_start_time=server_instance.last_scan_start_time,
         last_scan_end_time=server_instance.last_scan_end_time,
         indexed_chunk_count=chunk_count,
-        error_message=server_instance.current_error,
+        error_message=error_msg,
     )

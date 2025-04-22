@@ -1,15 +1,25 @@
-import threading
-import time
 import datetime
 import logging
-from typing import Optional
+import threading
+import time
+from enum import Enum, auto
+from typing import Optional, Any
 
-
-from .indexer import Indexer
 from .file_watcher import FileWatcher
+from .indexer import Indexer
 from .models import Settings
 
 log = logging.getLogger(__name__)
+
+
+class ServerStatus(Enum):
+    """Represents the initialization status of the server."""
+
+    INITIALIZING = auto()  # Server is starting up, indexer not ready
+    SCANNING = auto()      # Indexer is actively scanning/processing files
+    WATCHING = auto()      # Indexer is ready and watching for file changes
+    READY = auto()         # Alias for WATCHING, indicating operational state
+    ERROR = auto()         # Server encountered an unrecoverable error during init
 
 
 class MCPServer:
@@ -17,23 +27,39 @@ class MCPServer:
 
     def __init__(self):
         self.settings = Settings()
-        self.indexer = Indexer(self.settings)
+        self.indexer: Optional[Indexer] = None
+        self.status: ServerStatus = ServerStatus.INITIALIZING
+        self.initialization_error: Optional[Exception] = None
         self.file_watcher = FileWatcher(
             project_path=self.settings.project_path,
-            indexer=self.indexer,
+            indexer=self.indexer,  # Note: Indexer is None initially
             ignore_patterns=self.settings.ignore_patterns,
         )
         self.project_path = self.settings.project_path
-        self.status: str = "Idle - Initial Scan Required"
         self.last_scan_start_time: Optional[float] = None
         self.last_scan_end_time: Optional[float] = None
         self.current_error: Optional[str] = None
         self.watcher_thread = None
 
-        log.info(f"MCPServer initialized with settings: {self.settings}")
         log.info(f"Monitoring project path: {self.project_path}")
 
-        self._start_watcher_thread()
+    async def _initialize_dependencies(self):
+        """Asynchronously initializes dependencies like the Indexer."""
+        log.info("Starting background initialization...")
+        try:
+            indexer = Indexer(self.settings)
+
+            await indexer.load_resources()
+
+            self.indexer = indexer
+            self.status = ServerStatus.READY
+            log.info("Background initialization complete. Server is READY.")
+            self._start_watcher_thread()
+
+        except Exception as e:
+            log.critical(f"Failed to initialize dependencies: {e}", exc_info=True)
+            self.initialization_error = e
+            self.status = ServerStatus.ERROR
 
     def _start_watcher_thread(self):
         """Starts the file watcher thread."""
@@ -79,7 +105,7 @@ class MCPServer:
                 log.info(f"Index cleared for {project_path}.")
 
             log.info(f"Running initial scan for {project_path}...")
-            self.file_watcher.initial_scan()  # This blocks until scan is done
+            self.file_watcher.initial_scan()
             self.last_scan_end_time = time.time()
             self.status = "Watching"  # Assume continuous watching after scan
             log.info(f"Scan completed for {project_path} at {datetime.datetime.now()}")

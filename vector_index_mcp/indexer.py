@@ -42,88 +42,80 @@ class Indexer:
     def __init__(self, settings: Settings):
         self.settings = settings
         log.info(f"Initializing Indexer with settings: {settings}")
-        try:
-            self.model = sentence_transformers.SentenceTransformer(
-                settings.embedding_model_name
-            )
-            log.info(f"Loaded embedding model: {settings.embedding_model_name}")
-        except Exception as e:
-            log.error(
-                f"Failed to load sentence transformer model '{settings.embedding_model_name}': {e}",
-                exc_info=True,
-            )
-            raise  # Re-raise critical error
-
-        try:
-            self.db = lancedb.connect(settings.lancedb_uri)
-            log.info(f"Connected to LanceDB at URI: {settings.lancedb_uri}")
-        except Exception as e:
-            log.error(
-                f"Failed to connect to LanceDB at '{settings.lancedb_uri}': {e}",
-                exc_info=True,
-            )
-            raise  # Re-raise critical error
-
+        self.model = None
+        self.db = None
+        self.table = None
         self.table_name = "documents"
 
-        # --- Schema Definition and Table Creation ---
-        # Schema is now inferred directly from the IndexedDocument LanceModel.
-        # LanceDB handles schema creation/validation when using LanceModel.
-        log.info("Using schema inferred from IndexedDocument model.")
+    async def load_resources(self):
+        """Asynchronously loads the embedding model and connects to the database."""
+        log.info("Loading Indexer resources...")
 
         try:
-            # Attempt to open the table. LanceDB might perform basic checks.
-            # More robust schema validation happens implicitly if creation is needed.
+            self.model = sentence_transformers.SentenceTransformer(
+                self.settings.embedding_model_name
+            )
+            log.info(f"Loaded embedding model: {self.settings.embedding_model_name}")
+        except Exception as e:
+            log.error(
+                f"Failed to load sentence transformer model '{self.settings.embedding_model_name}': {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise critical error
+
+        try:
+            self.db = lancedb.connect(self.settings.lancedb_uri)
+            log.info(f"Connected to LanceDB at URI: {self.settings.lancedb_uri}")
+        except Exception as e:
+            log.error(
+                f"Failed to connect to LanceDB at '{self.settings.lancedb_uri}': {e}",
+                exc_info=True,
+            )
+            raise  # Re-raise critical error
+
+        log.info("Using schema inferred from IndexedDocument model.")
+        try:
+            # Attempt to open the table.
             self.table = self.db.open_table(self.table_name)
             log.info(f"Opened existing table '{self.table_name}'.")
-            # Optional: Add a check here if needed, comparing self.table.schema with IndexedDocument.schema()
-            # For now, rely on LanceDB's handling during operations.
+            # Optional: Add schema validation if needed here.
         except (
             FileNotFoundError,
             ValueError,
             pa.lib.ArrowIOError,
-        ) as e:  # Catch relevant errors (ValueError covers table not found)
+        ) as e:
             log.warning(
                 f"Table '{self.table_name}' not found or schema potentially incompatible ({type(e).__name__}: {e}). Attempting to create/recreate."
             )
             try:
-                # If the error suggests incompatibility (e.g., ValueError from a manual check above, or certain ArrowIOErrors),
-                # explicitly drop before creating. Otherwise, create_table with schema handles it.
-                if isinstance(
-                    e, ValueError
-                ):  # Or other specific incompatibility indicators
+                # Drop if necessary (e.g., based on specific error types indicating incompatibility)
+                if isinstance(e, ValueError):  # Example condition
                     try:
                         self.db.drop_table(self.table_name)
                         log.info(
                             f"Dropped potentially incompatible table '{self.table_name}' before recreating."
                         )
                     except Exception as drop_e:
-                        # Log warning but proceed, create_table might still work or fail clearly
                         log.warning(
                             f"Failed to explicitly drop table '{self.table_name}' before recreation: {drop_e}"
                         )
 
-                # Create table using the LanceModel schema. mode="create" prevents overwriting existing compatible tables.
-                # LanceDB will raise an error if the table exists but the schema doesn't match IndexedDocument.
+                # Create table using the LanceModel schema.
                 self.table = self.db.create_table(
                     self.table_name, schema=IndexedDocument, mode="create"
                 )
                 log.info(
                     f"Created new table '{self.table_name}' using schema from IndexedDocument model."
                 )
-                # Index creation should happen later, once data exists.
-                # Index creation should be triggered separately after data is added or when needed.
+                # Consider triggering index creation here or separately after data loading.
             except Exception as ce:
                 log.error(
-                    f"Failed to create table '{self.table_name}' or initial index: {ce}",
+                    f"Failed to create table '{self.table_name}': {ce}",
                     exc_info=True,
                 )
-                raise  # Re-raise the exception to indicate critical failure
+                raise
 
-        # --- Ensure Vector Index Exists (Optional but Recommended) ---
-        # This might be redundant if index creation is robustly handled in the creation block,
-        # but can serve as a check or attempt to create if missed.
-        # self.create_vector_index() # Consider calling this explicitly after initial scan or periodically.
+        log.info("Indexer resources loaded successfully.")
 
     def create_vector_index(self, replace=False):
         """Creates the vector index on the table."""
