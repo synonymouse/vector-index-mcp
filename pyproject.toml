@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "vector-index-mcp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "MCP Server for Software Project Indexing & Semantic Search"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -46,3 +46,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
 ]
+
+[tool.setuptools_scm]
+# Empty section enables setuptools-scm with default settings
+# It will infer the version from git tags
