@@ -15,7 +15,7 @@ This document outlines the architecture for a Model Context Protocol (MCP) serve
 
 ```mermaid
 graph LR
-    subgraph UserClient [MCP Client (e.g., Claude Desktop, mcp inspect)]
+    subgraph UserClient ["MCP Client (e.g., Claude Desktop, mcp inspect)"]
         direction LR
         ClientUI[User Interface/CLI]
     end
@@ -28,7 +28,7 @@ graph LR
         FastMCP -- Calls --> ToolGetStatus["get_status_tool"]
         FastMCP -- Calls --> ToolSearchIndex["search_index_tool"]
 
-        subgraph MCPServerCore [MCPServer Class (vector_index_mcp.mcp_server)]
+        subgraph MCPServerCore ["MCPServer Class (vector_index_mcp.mcp_server)"]
             direction TB
             Config[Dynamic Project Path Config]
             InitLogic["_initialize_dependencies()"]

@@ -317,7 +317,7 @@ def test_call_tool_search_index(server_process, temp_project_dir):
     assert isinstance(search_results, list)
     assert len(search_results) > 0
     assert any("fox" in r["extracted_text_chunk"].lower() for r in search_results)
-    assert any(r["file_path"] == file1_path for r in search_results)
+    assert any(os.path.realpath(r["file_path"]) == os.path.realpath(file1_path) for r in search_results)
 
     send_mcp_request(
         server_process,
@@ -343,4 +343,4 @@ def test_call_tool_search_index(server_process, temp_project_dir):
     assert any(
         "semantic search" in r["extracted_text_chunk"].lower() for r in search_results_2
     )
-    assert any(r["file_path"] == file2_path for r in search_results_2)
+    assert any(os.path.realpath(r["file_path"]) == os.path.realpath(file2_path) for r in search_results_2)

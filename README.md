@@ -40,7 +40,7 @@ The server will start, begin watching the specified project path for changes, an
         *   `EMBEDDING_MODEL_NAME`: The Hugging Face Sentence Transformer model used for generating embeddings.
             *   Default: `all-MiniLM-L6-v2`.
         *   `IGNORE_PATTERNS`: Comma-separated list of glob patterns specifying files/directories to exclude from indexing (e.g., `__pycache__/*,.git/*,*.db`). These patterns are relative to the `PROJECT_PATH`.
-            *   Default: `.git,__pycache__,*.pyc,*.DS_Store,.DS_Store`
+            *   Default: `.*,*.db,*.sqlite,*.log,node_modules/*,venv/*,.git/*`
         *   `LOG_LEVEL`: Logging level for the application.
             *   Default: `INFO`.
 
@@ -54,7 +54,7 @@ The server will start, begin watching the specified project path for changes, an
         # EMBEDDING_MODEL_NAME=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 
         # Comma-separated list of glob patterns to ignore.
-        # Default: .git,__pycache__,*.pyc,*.DS_Store,.DS_Store
+        # Default: .*,*.db,*.sqlite,*.log,node_modules/*,venv/*,.git/*
         # IGNORE_PATTERNS=*.log,*.tmp,node_modules/*,dist/*,build/*
 
         # Logging level. Default is INFO
@@ -75,7 +75,7 @@ If you want to contribute to or modify the server itself:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/vector-index-mcp.git # TODO: Update with actual URL if available, otherwise use a placeholder
+    git clone https://github.com/synonymouse/vector-index-mcp.git
     cd vector-index-mcp
     ```
 2.  **Set up the development environment:**
@@ -109,7 +109,7 @@ Ensure your virtual environment is activated (`source .venv/bin/activate`) befor
 
 *   `make test`: Run the test suite using `pytest`.
 *   `make lint`: Check code style and format using `ruff`.
-*   `make run-dev`: This command might need adjustment to correctly run `vector_index_mcp/main_mcp.py` with a default development project path. Alternatively, run the server directly for development: `python vector_index_mcp/main_mcp.py <path_to_test_project>`.
+*   `make run-dev`: Runs the development server, indexing the current directory.
 *   `make clean`: Remove temporary files (`__pycache__`, build artifacts, etc.).
 *   `make help`: Display a list of available commands.
 
@@ -150,25 +150,29 @@ graph TD
     Indexer["vector_index_mcp/indexer.py"]
     FileWatcher["vector_index_mcp/file_watcher.py"]
     ContentExtractor["vector_index_mcp/content_extractor.py"]
-    Models["vector_index_mcp/models.py (Settings, etc.)"]
+    Config["vector_index_mcp/config.py (Settings)"]
+    Models["vector_index_mcp/models.py (Data Models)"]
     PyProject["pyproject.toml"]
     README["README.md"]
     REFACTORING_PLAN["REFACTORING_PLAN.md"]
     Tests["tests/"]
 
     MainMCP --> MCPServerClass
-    MainMCP --> Models
+    MainMCP --> Config
     MCPServerClass --> Indexer
     MCPServerClass --> FileWatcher
-    MCPServerClass --> Models
+    MCPServerClass --> Config
     Indexer --> ContentExtractor
     Indexer --> Models
+    Indexer --> Config
     FileWatcher --> Indexer
+    FileWatcher --> Models
+    FileWatcher --> Config
 
     PyProject -. Used for build and dependencies .-> MainMCP
     PyProject -. Used for build and dependencies .-> MCPServerClass
     PyProject -. Used for build and dependencies .-> Indexer
     PyProject -. Used for build and dependencies .-> FileWatcher
     PyProject -. Used for build and dependencies .-> ContentExtractor
+    PyProject -. Used for build and dependencies .-> Config
     PyProject -. Used for build and dependencies .-> Models
-```
