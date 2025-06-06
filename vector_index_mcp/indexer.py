@@ -12,7 +12,9 @@ from .models import (
     Settings,
 )
 
-log = logging.getLogger(__name__) # BasicConfig should be handled at the application entry point (main_mcp.py)
+log = logging.getLogger(
+    __name__
+)  # BasicConfig should be handled at the application entry point (main_mcp.py)
 
 
 class FileMetadataDict(TypedDict):
@@ -20,6 +22,7 @@ class FileMetadataDict(TypedDict):
     Typed dictionary representing the serialized form of FileMetadata.
     Used for structuring search results.
     """
+
     original_path: str
 
 
@@ -28,6 +31,7 @@ class SearchResultDict(TypedDict):
     Typed dictionary representing the structure of a single search result
     as returned by the `Indexer.search` method.
     """
+
     document_id: str
     file_path: str
     content_hash: str
@@ -45,6 +49,7 @@ class Indexer:
     Manages the vector index, including loading embedding models,
     connecting to LanceDB, adding/updating documents, and performing searches.
     """
+
     def __init__(self, settings: Settings):
         """
         Initializes the Indexer.
@@ -53,7 +58,9 @@ class Indexer:
             settings: Configuration settings for the indexer.
         """
         self.settings = settings
-        log.info(f"Initializing Indexer with embedding model '{settings.embedding_model_name}' and LanceDB URI '{settings.lancedb_uri}'.")
+        log.info(
+            f"Initializing Indexer with embedding model '{settings.embedding_model_name}' and LanceDB URI '{settings.lancedb_uri}'."
+        )
         self.model: Optional[sentence_transformers.SentenceTransformer] = None
         self.db: Optional[AsyncConnection] = None
         self.table: Optional[AsyncTable] = None
@@ -78,13 +85,17 @@ class Indexer:
 
         # Load Sentence Transformer Model
         try:
-            log.info(f"Indexer: Loading sentence transformer model '{self.settings.embedding_model_name}'...")
+            log.info(
+                f"Indexer: Loading sentence transformer model '{self.settings.embedding_model_name}'..."
+            )
             # Model loading is CPU-bound, consider to_thread if it becomes a bottleneck
             # For now, direct call as it's usually part of startup.
             self.model = sentence_transformers.SentenceTransformer(
                 self.settings.embedding_model_name
             )
-            log.debug(f"Indexer: Model '{self.settings.embedding_model_name}' loaded. Type: {type(self.model)}.")
+            log.debug(
+                f"Indexer: Model '{self.settings.embedding_model_name}' loaded. Type: {type(self.model)}."
+            )
         except BaseException as be:
             log.critical(
                 f"Indexer: CRITICAL FAILURE loading sentence transformer model '{self.settings.embedding_model_name}': {type(be).__name__}: {be}",
@@ -102,9 +113,7 @@ class Indexer:
             log.info(
                 f"Indexer: Connecting to LanceDB asynchronously at URI: {self.settings.lancedb_uri}"
             )
-            self.db = await lancedb.connect_async(
-                self.settings.lancedb_uri
-            )
+            self.db = await lancedb.connect_async(self.settings.lancedb_uri)
             log.info(
                 f"Indexer: Successfully connected to LanceDB asynchronously. DB object: {self.db}"
             )
@@ -116,7 +125,9 @@ class Indexer:
             raise
 
         # Open or Create Table
-        log.info(f"Indexer: Preparing table '{self.table_name}' using schema from 'IndexedDocument' model.")
+        log.info(
+            f"Indexer: Preparing table '{self.table_name}' using schema from 'IndexedDocument' model."
+        )
         self.table = None
 
         table_opened_successfully = False
@@ -278,21 +289,32 @@ class Indexer:
         log.debug(f"Indexer: Generating embedding for text snippet: '{text[:100]}...'")
         if self.model is None:
             # This should ideally be caught earlier during load_resources or by checks in calling methods.
-            log.critical("Indexer: Embedding model (self.model) is None when generate_embedding was called. This is a critical state.")
-            raise RuntimeError("Embedding model is not loaded. Cannot generate embedding.")
+            log.critical(
+                "Indexer: Embedding model (self.model) is None when generate_embedding was called. This is a critical state."
+            )
+            raise RuntimeError(
+                "Embedding model is not loaded. Cannot generate embedding."
+            )
         try:
-            embedding = self.model.encode(text, normalize_embeddings=True) # Normalizing is often good for cosine similarity
-            return embedding.astype(np.float32) # Ensure float32 for compatibility with LanceDB/Arrow
+            embedding = self.model.encode(
+                text, normalize_embeddings=True
+            )  # Normalizing is often good for cosine similarity
+            return embedding.astype(
+                np.float32
+            )  # Ensure float32 for compatibility with LanceDB/Arrow
         except AttributeError as ae:
             # This might happen if self.model is not a valid SentenceTransformer object despite not being None.
-            log.error(f"Indexer: AttributeError during embedding generation. self.model type: {type(self.model)}. Error: {ae}", exc_info=True)
+            log.error(
+                f"Indexer: AttributeError during embedding generation. self.model type: {type(self.model)}. Error: {ae}",
+                exc_info=True,
+            )
             raise
         except Exception as e:
             log.error(
                 f"Indexer: Failed to generate embedding for text snippet '{text[:100]}...': {e}",
                 exc_info=True,
             )
-            raise # Re-raise to allow caller to handle.
+            raise  # Re-raise to allow caller to handle.
 
     async def add_or_update_document(self, doc: IndexedDocument):
         """
@@ -309,16 +331,22 @@ class Indexer:
                  The `vector` field will be populated by this method.
         """
         if not self.table:
-            log.error(f"Indexer: Cannot add document '{doc.document_id}'; table is not initialized.")
-            return # Or raise an error
+            log.error(
+                f"Indexer: Cannot add document '{doc.document_id}'; table is not initialized."
+            )
+            return  # Or raise an error
 
         try:
             vector_embedding = self.generate_embedding(doc.extracted_text_chunk)
             # Pydantic V2 uses model_copy, V1 uses copy. Assuming V1 for .copy()
             doc_with_vector = doc.copy(update={"vector": vector_embedding.tolist()})
 
-            await self.table.add([doc_with_vector]) # Add as a list containing the single Pydantic object
-            log.debug(f"Indexer: Successfully added/updated document chunk ID: {doc.document_id}, file: {doc.file_path}")
+            await self.table.add(
+                [doc_with_vector]
+            )  # Add as a list containing the single Pydantic object
+            log.debug(
+                f"Indexer: Successfully added/updated document chunk ID: {doc.document_id}, file: {doc.file_path}"
+            )
         except Exception as e:
             log.error(
                 f"Indexer: Error adding/updating document chunk ID {doc.document_id} (file: {doc.file_path}): {e}",
@@ -338,20 +366,29 @@ class Indexer:
             Note: LanceDB's delete operation might not return the count of deleted rows directly.
         """
         if not self.table:
-            log.warning("Indexer: Table not initialized. Cannot remove document chunks.")
+            log.warning(
+                "Indexer: Table not initialized. Cannot remove document chunks."
+            )
             return False
         try:
             # Construct a SQL-like filter condition for the delete operation.
             # Ensure file_path is properly quoted if it can contain special characters, though LanceDB might handle this.
             delete_condition = f"file_path = '{file_path}'"
-            log.info(f"Indexer: Issuing delete command for document chunks with file_path: '{file_path}' (condition: \"{delete_condition}\")")
+            log.info(
+                f"Indexer: Issuing delete command for document chunks with file_path: '{file_path}' (condition: \"{delete_condition}\")"
+            )
             await self.table.delete(delete_condition)
             # LanceDB's delete operation typically returns None on success or raises an error.
             # A more robust check might involve querying count before and after if necessary.
-            log.info(f"Indexer: Delete command for file_path '{file_path}' completed. Check logs for any LanceDB errors if issues persist.")
+            log.info(
+                f"Indexer: Delete command for file_path '{file_path}' completed. Check logs for any LanceDB errors if issues persist."
+            )
             return True
         except Exception as e:
-            log.error(f"Indexer: Error deleting document chunks for file_path '{file_path}': {e}", exc_info=True)
+            log.error(
+                f"Indexer: Error deleting document chunks for file_path '{file_path}': {e}",
+                exc_info=True,
+            )
             return False
 
     async def search(self, query_text: str, top_k: int = 5) -> List[SearchResultDict]:
@@ -369,31 +406,42 @@ class Indexer:
             ValueError: If the search operation fails or `query_text` is empty.
         """
         if not self.table:
-            log.error("Indexer: Cannot perform search because the table is not initialized.")
+            log.error(
+                "Indexer: Cannot perform search because the table is not initialized."
+            )
             raise ValueError("Search failed: Index table not available.")
         if not query_text:
-            log.warning("Indexer: Received empty query text for search. Returning no results.")
+            log.warning(
+                "Indexer: Received empty query text for search. Returning no results."
+            )
             return []
 
         try:
-            log.info(f"Indexer: Performing search for query: '{query_text[:70]}...', top_k={top_k}")
+            log.info(
+                f"Indexer: Performing search for query: '{query_text[:70]}...', top_k={top_k}"
+            )
             query_embedding = self.generate_embedding(query_text)
 
             # Perform the search against the 'vector' column.
             # self.table.search() is an async method and returns an AsyncVectorQuery object.
             # .limit() can be chained on the AsyncVectorQuery object.
             # .to_arrow() is an async method on AsyncVectorQuery that returns a pyarrow.Table.
-            async_search_obj = await self.table.search(query_embedding) # This is an AsyncVectorQuery
+            async_search_obj = await self.table.search(
+                query_embedding
+            )  # This is an AsyncVectorQuery
             query_builder = async_search_obj.limit(top_k)
             arrow_table = await query_builder.to_arrow()
             dict_results = arrow_table.to_pylist()
             # Manually convert dicts to Pydantic models
-            pydantic_results: List[IndexedDocument] = [IndexedDocument(**row) for row in dict_results]
+            pydantic_results: List[IndexedDocument] = [
+                IndexedDocument(**row) for row in dict_results
+            ]
 
             # Convert Pydantic models to the SearchResultDict typed dictionary.
             # Exclude 'vector' from the final result as it's large and usually not needed by clients.
             typed_results: List[SearchResultDict] = [
-                r.dict(exclude={'vector'}) for r in pydantic_results # Use .dict(exclude=...) for Pydantic V1
+                r.dict(exclude={"vector"})
+                for r in pydantic_results  # Use .dict(exclude=...) for Pydantic V1
             ]
             log.info(
                 f"Indexer: Search for '{query_text[:70]}...' returned {len(typed_results)} results."
@@ -401,7 +449,8 @@ class Indexer:
             return typed_results
         except Exception as e:
             log.error(
-                f"Indexer: Search failed for query '{query_text[:70]}...': {e}", exc_info=True
+                f"Indexer: Search failed for query '{query_text[:70]}...': {e}",
+                exc_info=True,
             )
             # Re-raise as a ValueError to indicate a problem with the search operation itself.
             raise ValueError(f"Search operation failed: {str(e)}")
@@ -426,15 +475,26 @@ class Indexer:
         if project_path:
             # Basic sanitization for the LIKE pattern.
             # This is a simple measure; for complex user inputs, more robust sanitization might be needed.
-            safe_project_path_segment = project_path.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+            safe_project_path_segment = (
+                project_path.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+            )
             filter_clause = f"file_path LIKE '{safe_project_path_segment}%'"
-            log.debug(f"Indexer: Counting chunks with filter: \"{filter_clause}\"")
+            log.debug(f'Indexer: Counting chunks with filter: "{filter_clause}"')
         else:
             log.debug("Indexer: Counting all chunks in the table.")
 
         try:
-            count = await self.table.count_rows(filter_clause) # filter_clause can be None for no filter
-            log.info(f"Indexer: Found {count} indexed chunks" + (f" for project path prefix '{project_path}'." if project_path else "."))
+            count = await self.table.count_rows(
+                filter_clause
+            )  # filter_clause can be None for no filter
+            log.info(
+                f"Indexer: Found {count} indexed chunks"
+                + (
+                    f" for project path prefix '{project_path}'."
+                    if project_path
+                    else "."
+                )
+            )
             return count
         except Exception as e:
             log.error(
@@ -443,7 +503,7 @@ class Indexer:
                 + f": {e}",
                 exc_info=True,
             )
-            return 0 # Return 0 on error to avoid breaking callers expecting an int.
+            return 0  # Return 0 on error to avoid breaking callers expecting an int.
 
     def clear_index(self, project_path: Optional[str] = None):
         """
@@ -462,15 +522,19 @@ class Indexer:
         where_clause = None
         log_message_segment = "all documents"
         if project_path:
-            safe_project_path_segment = project_path.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+            safe_project_path_segment = (
+                project_path.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+            )
             where_clause = f"file_path LIKE '{safe_project_path_segment}%'"
             log_message_segment = f"documents for project path prefix '{project_path}'"
 
         try:
             count_before = self.table.count_rows(where_clause)
             if count_before > 0:
-                log.info(f"Indexer: Attempting to delete {count_before} chunks from {log_message_segment} (filter: \"{where_clause}\").")
-                self.table.delete(where_clause) # delete() returns None on success
+                log.info(
+                    f'Indexer: Attempting to delete {count_before} chunks from {log_message_segment} (filter: "{where_clause}").'
+                )
+                self.table.delete(where_clause)  # delete() returns None on success
                 # Verify deletion if possible, or assume success if no exception.
                 log.info(
                     f"Indexer: Successfully issued delete command for {count_before} chunks from {log_message_segment}."
