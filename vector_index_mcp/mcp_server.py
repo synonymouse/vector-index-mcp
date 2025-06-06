@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from enum import Enum, auto
-from typing import Optional, Any
+from typing import Any, Optional
 
 from .file_watcher import FileWatcher
 from .indexer import Indexer
@@ -93,6 +93,10 @@ class MCPServer:
                     exc_info=True,
                 )
                 # Depending on strictness, could raise here or allow FileWatcher to operate in a limited mode / log errors later.
+
+            # Automatically trigger an initial scan of project files on startup
+            log.info("Triggering initial project file scan on server startup...")
+            await self._scan_project_files(self.project_path, False)
 
             log.debug(
                 "MCPServer._initialize_dependencies: Indexer and FileWatcher configured. About to set status to READY."

@@ -1,8 +1,10 @@
-import sys
-import logging
 import json
+import logging
+import sys
 from contextlib import asynccontextmanager
+
 from mcp.server.fastmcp import FastMCP
+
 from vector_index_mcp.mcp_server import MCPServer
 
 logging.basicConfig(
@@ -50,7 +52,7 @@ mcp = FastMCP(
 
 @mcp.tool(
     name="trigger_index",
-    description="Triggers the indexing process for the project. Can force re-indexing.",
+    description="Triggers the process of scanning project files, extracting text, and storing it in a vector index for subsequent searching. Use this tool after making significant changes to the project or for initial setup. The `force_reindex` parameter will first delete the existing index, which is useful if files have been deleted or the configuration has changed.",
 )
 async def trigger_index_tool(force_reindex: bool = False) -> dict:
     """
@@ -84,7 +86,7 @@ async def trigger_index_tool(force_reindex: bool = False) -> dict:
 
 @mcp.tool(
     name="get_status",
-    description="Gets the current status of the MCP server and indexer.",
+    description="Retrieves the current operational status of the server. This includes information on whether the server is initializing, actively scanning files, or ready and watching for changes. It also provides statistics such as the number of indexed document chunks, helping to monitor the server's health and progress.",
 )
 async def get_status_tool() -> dict:
     """
@@ -110,7 +112,8 @@ async def get_status_tool() -> dict:
 
 
 @mcp.tool(
-    name="search_index", description="Searches the vector index for a given query."
+    name="search_index",
+    description="Performs a semantic search for a given query against the project's indexed content. It returns the most relevant text chunks from your files based on their meaning, not just keywords. The `top_k` parameter controls the number of results returned. Ideal for finding code snippets, documentation, or relevant context within your project.",
 )
 async def search_index_tool(query: str, top_k: int = 5) -> dict:
     """

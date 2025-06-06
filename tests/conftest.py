@@ -1,3 +1,4 @@
+import fcntl
 import json
 import logging
 import os
@@ -41,7 +42,10 @@ def start_server_process(env_vars):
         text=True,
         bufsize=1,
     )
-    time.sleep(15)
+    # The initial sleep is a blunt instrument, but necessary to give the server
+    # process time to start up and be ready to receive requests. A more
+    # sophisticated approach would involve a health check loop.
+    time.sleep(5)
     return proc
 
 
@@ -162,65 +166,36 @@ def read_mcp_response(process, timeout=20):
         ) from e
 
 
-def read_stderr(process, timeout=0.1):
-    """Reads from stderr of the process."""
+def read_stderr(process, timeout=1.0):
+    """
+    Reads all available lines from the process's stderr without blocking.
+    Uses select to check for readability and reads until the buffer is empty.
+    """
     if process.stderr is None:
         return "Stderr not available"
 
     output = []
-    process.stderr.flush()
+    # Set the stream to non-blocking
+    fd = process.stderr.fileno()
+    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
-    if (
-        hasattr(os, "fcntl")
-        and hasattr(os, "F_GETFL")
-        and hasattr(os, "F_SETFL")
-        and hasattr(os, "O_NONBLOCK")
-    ):
-        fd = process.stderr.fileno()
-        fl = os.fcntl(fd, os.F_GETFL)
+    start_time = time.time()
+    while time.time() - start_time < timeout:
         try:
-            os.fcntl(fd, os.F_SETFL, fl | os.O_NONBLOCK)
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                try:
-                    line = process.stderr.readline()
-                    if line:
-                        output.append(line)
-                    else:
-                        break
-                except BlockingIOError:
-                    if not (time.time() - start_time < timeout):
-                        break
-                    time.sleep(0.01)
-                except Exception:
-                    break
-        finally:
-            os.fcntl(fd, os.F_SETFL, fl)
-    else:
-        end_time = time.time() + timeout
-        while time.time() < end_time:
-            remaining_timeout = max(0, end_time - time.time())
-            if remaining_timeout == 0:
-                break
-
-            try:
-                ready_to_read, _, _ = select.select(
-                    [process.stderr], [], [], remaining_timeout
-                )
-            except ValueError:
-                break
-
-            if process.stderr in ready_to_read:
-                try:
-                    line = process.stderr.readline()
-                    if line:
-                        output.append(line)
-                    else:  # EOF
-                        break
-                except Exception:
-                    break
+            line = process.stderr.readline()
+            if line:
+                output.append(line)
             else:
-                break
+                # No more data, sleep a bit
+                time.sleep(0.1)
+        except BlockingIOError:
+            # No data available, wait a bit
+            time.sleep(0.1)
+            continue
+        except ValueError:
+            # Pipe closed
+            break
 
     return "".join(output)
 
