@@ -7,7 +7,7 @@ name = "vector-index-mcp"
 dynamic = ["version"]
 description = "MCP Server for Software Project Indexing & Semantic Search"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
   { name="Elisei Shchukin", email="yelis.chuk@gmail.com" },
@@ -19,8 +19,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
     "watchdog",
     "sentence-transformers",
     "transformers",
@@ -30,6 +28,7 @@ dependencies = [
     "tiktoken",
     "pathspec",
     "pandas",
+    "mcp[cli]",
 ]
 
 [project.urls]
@@ -37,16 +36,21 @@ dependencies = [
 "Bug Tracker" = "https://github.com/synonymouse/vector-index-mcp/issues"
 
 [project.scripts]
-vector-index-mcp = "vector_index_mcp.cli:main"
+vector-index-mcp = "vector_index_mcp.main_mcp:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "httpx",
     "pytest-asyncio",
     "ruff",
 ]
+[tool.poetry]
+name = "vector-index-mcp"
+version = "0.1.0"
+description = "MCP Server for Software Project Indexing & Semantic Search"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
 [tool.setuptools_scm]
 # Empty section enables setuptools-scm with default settings
 # It will infer the version from git tags

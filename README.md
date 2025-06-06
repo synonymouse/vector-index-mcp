@@ -6,63 +6,68 @@ For detailed design and architectural decisions, please refer to [ARCHITECTURE.m
 
 ## Usage (End Users)
 
-This server is designed to be run easily within the directory of the software project you want to index.
+This server is designed to be run easily by pointing it to the software project you want to index.
 
-### 1. Install `pipx` (One-time Setup)
+### 1. Run the Server
 
-`pipx` allows running Python applications in isolated environments. If you don't have it, install it:
-
-```bash
-pip install pipx
-pipx ensurepath
-# Restart your terminal after running ensurepath if the command isn't found
-```
-
-### 2. Configure the Server
-
-Navigate to the root directory of the software project you wish to index. Create a `.env` file in this directory with the following content:
-
-```dotenv
-# --- Required ---
-# Path to the software project you want to index (use '.' for the current directory)
-PROJECT_PATH=.
-
-# --- Optional (Defaults Provided) ---
-# URI for the LanceDB database. './.lancedb' stores it within your project folder.
-LANCEDB_URI=./.lancedb
-
-# Name of the Sentence Transformer model to use for embeddings
-EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
-
-# Comma-separated list of glob patterns to ignore (relative to PROJECT_PATH)
-# Example: IGNORE_PATTERNS=*.log,*.tmp,node_modules/*,.git/*,dist/*
-IGNORE_PATTERNS=__pycache__/*,.git/*,*.db,*.pyc,build/*,dist/*
-
-# Host and Port for the server (rarely need changing for local use)
-HOST=0.0.0.0
-PORT=8000
-```
-
-**Explanation:**
-
-*   `PROJECT_PATH`: **Required.** Set this to `.` to index the current directory where you run the server.
-*   `LANCEDB_URI`: Path where the LanceDB vector database will be stored. Using `./.lancedb` keeps the index data within your project directory. Defaults to `./.lancedb`.
-*   `EMBEDDING_MODEL_NAME`: The Hugging Face Sentence Transformer model used for generating embeddings. Defaults to `all-MiniLM-L6-v2`.
-*   `IGNORE_PATTERNS`: Comma-separated list of glob patterns specifying files/directories to exclude from indexing, relative to `PROJECT_PATH`. Defaults are provided.
-*   `HOST`: Host address for the server. Defaults to `0.0.0.0`.
-*   `PORT`: Port for the server. Defaults to `8000`.
-
-### 3. Run the Server
-
-From the root directory of your software project (where the `.env` file is located), run:
+Navigate to a convenient location in your terminal. The server is started using the `python -m` command, specifying the module and the path to the project you wish to index.
 
 ```bash
-pipx run vector-index-mcp
+python -m vector_index_mcp.main_mcp <path_to_your_project>
 ```
 
-`pipx` will automatically download the server, install its dependencies in an isolated environment, and start it. The server will use the `.env` file in your current directory for configuration, begin watching the `PROJECT_PATH` for changes, and create the LanceDB database at `LANCEDB_URI`.
+For example, to index a project located at `~/dev/my_cool_project`, you would run:
+```bash
+python -m vector_index_mcp.main_mcp ~/dev/my_cool_project
+```
+Or, to index the current directory:
+```bash
+python -m vector_index_mcp.main_mcp .
+```
 
-You may need to trigger an initial scan via the API if the index is empty (see API Endpoints).
+The server will start, begin watching the specified project path for changes, and create/use a LanceDB database within that project's directory (by default).
+
+### 2. Configuration
+
+*   **`PROJECT_PATH` (Required, via Command Line):**
+    *   This is now passed as a direct command-line argument to the server, as shown above. It specifies the root directory of the software project you want to index.
+
+*   **Environment Variables (Optional, via `.env` file):**
+    *   Other settings can be configured using an `.env` file placed in the directory **from where you run the `python -m ...` command**. The server uses `pydantic-settings` and will automatically load this `.env` file.
+    *   The following variables are supported:
+        *   `LANCEDB_URI`: Path where the LanceDB vector database will be stored.
+            *   Default: `./.lancedb` (relative to the indexed project's path, meaning it's stored within the project itself).
+        *   `EMBEDDING_MODEL_NAME`: The Hugging Face Sentence Transformer model used for generating embeddings.
+            *   Default: `all-MiniLM-L6-v2`.
+        *   `IGNORE_PATTERNS`: Comma-separated list of glob patterns specifying files/directories to exclude from indexing (e.g., `__pycache__/*,.git/*,*.db`). These patterns are relative to the `PROJECT_PATH`.
+            *   Default: `.git,__pycache__,*.pyc,*.DS_Store,.DS_Store`
+        *   `LOG_LEVEL`: Logging level for the application.
+            *   Default: `INFO`.
+
+    *   **Example `.env` file (place this where you run the server command):**
+        ```dotenv
+        # --- Optional (Defaults Provided) ---
+        # URI for the LanceDB database. Default is './.lancedb' (inside the indexed project).
+        # LANCEDB_URI=./my_project_index_data/.lancedb
+
+        # Name of the Sentence Transformer model. Default is 'all-MiniLM-L6-v2'.
+        # EMBEDDING_MODEL_NAME=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+
+        # Comma-separated list of glob patterns to ignore.
+        # Default: .git,__pycache__,*.pyc,*.DS_Store,.DS_Store
+        # IGNORE_PATTERNS=*.log,*.tmp,node_modules/*,dist/*,build/*
+
+        # Logging level. Default is INFO
+        # LOG_LEVEL=DEBUG
+        ```
+
+### 3. Accessing the Server
+
+Once running, the server provides its functionality via the Model Context Protocol (MCP). You can interact with it using MCP-compatible clients, such as:
+*   Claude Desktop (if configured to connect to this server)
+*   `mcp inspect` CLI tool for exploring available tools and resources.
+
+The server will announce its availability over MCP.
 
 ## Development Setup
 
@@ -70,7 +75,7 @@ If you want to contribute to or modify the server itself:
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repository-url> # TODO: Update URL
+    git clone https://github.com/your-username/vector-index-mcp.git # TODO: Update with actual URL if available, otherwise use a placeholder
     cd vector-index-mcp
     ```
 2.  **Set up the development environment:**
@@ -84,7 +89,19 @@ If you want to contribute to or modify the server itself:
     ```
     (On Windows using Git Bash or WSL, the command is the same. For Command Prompt/PowerShell, use `.venv\Scripts\activate`)
 
-4.  **(Optional) Create a `.env` file in the `vector-index-mcp` project root** for development-specific settings if needed (e.g., for `make run-dev`).
+4.  **(Optional) Create a `.env` file in the `vector-index-mcp` project root** for development-specific settings if needed. For example, to specify a test project path when running directly:
+    ```bash
+    # In vector-index-mcp/.env (for development)
+    # No PROJECT_PATH here, as it's passed as an argument
+    LANCEDB_URI=./.dev_lancedb
+    EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
+    LOG_LEVEL=DEBUG
+    IGNORE_PATTERNS=__pycache__/*,.git/*,*.tmp
+    ```
+    Then run the server pointing to a test project:
+    ```bash
+    python vector_index_mcp/main_mcp.py ../path/to/your/test_project
+    ```
 
 ## Development Commands
 
@@ -92,150 +109,66 @@ Ensure your virtual environment is activated (`source .venv/bin/activate`) befor
 
 *   `make test`: Run the test suite using `pytest`.
 *   `make lint`: Check code style and format using `ruff`.
-*   `make run-dev`: Start the development server with auto-reload. Uses the `.env` file in the `vector-index-mcp` root if present.
+*   `make run-dev`: This command might need adjustment to correctly run `vector_index_mcp/main_mcp.py` with a default development project path. Alternatively, run the server directly for development: `python vector_index_mcp/main_mcp.py <path_to_test_project>`.
 *   `make clean`: Remove temporary files (`__pycache__`, build artifacts, etc.).
 *   `make help`: Display a list of available commands.
 
-## API Endpoints
+## MCP Interface (MCP Tools)
 
-The server exposes the following HTTP endpoints:
+The server provides its functionality through the Model Context Protocol (MCP). Interaction with these tools occurs via an MCP-compatible client.
 
-### 1. Root
+### Available MCP Tools
 
-*   **Method:** `GET`
-*   **Path:** `/`
-*   **Description:** Simple health check endpoint.
-*   **Example Response (200 OK):**
-    ```json
-    {
-      "message": "MCP Indexing Server is running."
-    }
-    ```
+The following tools are exposed by the server (defined in `vector_index_mcp/main_mcp.py`):
 
-### 2. Index Project
+1.  **`trigger_index`**
+    *   **Description:** Triggers the indexing process for the specified project path.
+    *   **Arguments:**
+        *   `force_reindex: bool` (optional, default: `False`): If true, forces a re-index, clearing any existing index data for the project first.
+    *   **Note:** The `project_path` itself is implicitly handled by the server instance, as it's configured at startup. The tool acts on this pre-configured path.
 
-*   **Method:** `POST`
-*   **Path:** `/index`
-*   **Description:** Triggers a full re-indexing of the configured `PROJECT_PATH`. Use `force_reindex: true` to clear the existing index first.
-*   **Example Request Body:**
-    ```json
-    {
-      "project_path": ".", // Must match PROJECT_PATH from .env
-      "force_reindex": false
-    }
-    ```
-*   **Example Response (202 Accepted):**
-    ```json
-    {
-      "message": "Indexing process initiated for . in the background."
-    }
-    ```
-*   **Example Response (409 Conflict):**
-    ```json
-    {
-        "detail": "An indexing scan is already in progress."
-    }
-    ```
+2.  **`get_status`**
+    *   **Description:** Gets the current status of the indexer (e.g., idle, indexing, last_indexed_time).
+    *   **Arguments:** None.
 
-### 3. Semantic Search
+3.  **`search_index`**
+    *   **Description:** Searches the vector index for a given query.
+    *   **Arguments:**
+        *   `query: str` (required): The search query string.
+        *   `top_k: int` (optional, default: `5`): The number of top results to return.
 
-*   **Method:** `POST`
-*   **Path:** `/search`
-*   **Description:** Performs a semantic search over the indexed content for the configured `PROJECT_PATH`.
-*   **Example Request Body:**
-    ```json
-    {
-      "query": "How is user authentication handled?",
-      "top_k": 5 // Optional, defaults to 5
-    }
-    ```
-*   **Example Response (200 OK):**
-    ```json
-    {
-        "results": [
-            {
-                "document_id": "path/to/file.py::0",
-                "file_path": "path/to/file.py",
-                "content_hash": "...",
-                "last_modified_timestamp": 1678886400.0,
-                "extracted_text_chunk": "... relevant text chunk ...",
-                "metadata": {
-                    "original_path": "path/to/file.py"
-                }
-            }
-            // ... more results
-        ]
-    }
-    ```
-*   **Example Response (503 Service Unavailable):**
-    ```json
-    {
-        "detail": "Search unavailable: Index not yet built or server initializing."
-    }
-    ```
+### Interacting with MCP Tools
 
-### 4. Get Indexing Status
+Use an MCP client (like `mcp inspect` or a programmatic client) to discover and call these tools. The client will handle the communication with the server.
 
-*   **Method:** `GET`
-*   **Path:** `/status/{project_path:path}`
-*   **Description:** Retrieves the current indexing status for the specified project path (must match the configured `PROJECT_PATH`). The project path must be URL-encoded if it contains special characters (e.g., `.` becomes `%2E`).
-*   **Example Request:** `GET /status/%2E` (for `PROJECT_PATH=.`)
-*   **Example Response (200 OK):**
-    ```json
-    {
-      "project_path": ".",
-      "status": "Watching", // or "Scanning", "Error", "Idle - Initial Scan Required"
-      "last_scan_start_time": 1678886400.0,
-      "last_scan_end_time": 1678886460.0,
-      "indexed_chunk_count": 150,
-      "error_message": null
-    }
-    ```
-*   **Example Response (404 Not Found):**
-    ```json
-    {
-        "project_path": "/some/other/path",
-        "status": "Not Found",
-        "last_scan_start_time": null,
-        "last_scan_end_time": null,
-        "indexed_chunk_count": null,
-        "error_message": "Status requested for a path not managed by this server instance."
-    }
+## Project Structure
 
-
-### 5. Project structure
 ```mermaid
 graph TD
-    CLI["vector_index_mcp/cli.py"]
-    DEP["vector_index_mcp/dependencies.py"]
-    CE["vector_index_mcp/content_extractor.py"]
-    FW["vector_index_mcp/file_watcher.py"]
-    IND["vector_index_mcp/indexer.py"]
-    MAIN["vector_index_mcp/main.py"]
-    MCP["vector_index_mcp/mcp_server.py"]
-    MOD["vector_index_mcp/models.py"]
-    RI["vector_index_mcp/routers/index.py"]
-    RS["vector_index_mcp/routers/search.py"]
-    RST["vector_index_mcp/routers/status.py"]
-    TAPI["tests/test_api.py"]
+    MainMCP["vector_index_mcp/main_mcp.py (FastMCP Server)"]
+    MCPServerClass["vector_index_mcp/mcp_server.py (MCPServer Class)"]
+    Indexer["vector_index_mcp/indexer.py"]
+    FileWatcher["vector_index_mcp/file_watcher.py"]
+    ContentExtractor["vector_index_mcp/content_extractor.py"]
+    Models["vector_index_mcp/models.py (Settings, etc.)"]
+    PyProject["pyproject.toml"]
+    README["README.md"]
+    REFACTORING_PLAN["REFACTORING_PLAN.md"]
+    Tests["tests/"]
 
-    CLI --> MAIN;
+    MainMCP --> MCPServerClass
+    MainMCP --> Models
+    MCPServerClass --> Indexer
+    MCPServerClass --> FileWatcher
+    MCPServerClass --> Models
+    Indexer --> ContentExtractor
+    Indexer --> Models
+    FileWatcher --> Indexer
 
-    MAIN --> RI;
-    MAIN --> RS;
-    MAIN --> RST;
-    MAIN --> MCP;
-    MAIN --> MOD;
-    MAIN --> DEP;
-
-    MCP --> MOD;
-
-    IND --> MOD;
-
-    RI --> MOD;
-    RS --> MOD;
-    RST --> MOD;
-
-    TAPI --> MAIN;
-    TAPI --> MOD;
+    PyProject -. Used for build and dependencies .-> MainMCP
+    PyProject -. Used for build and dependencies .-> MCPServerClass
+    PyProject -. Used for build and dependencies .-> Indexer
+    PyProject -. Used for build and dependencies .-> FileWatcher
+    PyProject -. Used for build and dependencies .-> ContentExtractor
+    PyProject -. Used for build and dependencies .-> Models
 ```
