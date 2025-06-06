@@ -1,10 +1,9 @@
 import sys
 import logging
-import json # Added import
-from contextlib import asynccontextmanager # Added import
+import json
+from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 from vector_index_mcp.mcp_server import MCPServer
-# from vector_index_mcp.models import Settings # Settings is initialized within MCPServer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -24,19 +23,21 @@ async def lifespan_manager(mcp_app: FastMCP):
     await mcp_server_instance._initialize_dependencies()
     
     mcp_app.mcp_server = mcp_server_instance # Assign to mcp_app directly
-    log.info("Lifespan: MCPServer initialized and available at mcp_app.mcp_server")
+    log.info("Lifespan: MCPServer initialized and assigned to mcp_app.mcp_server.")
+    log.debug(f"Lifespan: mcp_app.mcp_server is now: {mcp_app.mcp_server}")
     
     try:
+        log.debug("Lifespan: Yielding to FastMCP to start processing requests.")
         yield
     finally:
         log.info("Lifespan: Shutting down MCPServer...")
-        if hasattr(mcp_app, 'mcp_server'): # Check on mcp_app directly
+        if hasattr(mcp_app, 'mcp_server') and mcp_app.mcp_server: # Check on mcp_app directly
             await mcp_app.mcp_server.shutdown() # Access from mcp_app directly
         log.info("Lifespan: MCPServer has shut down.")
 
 mcp = FastMCP(name="vector-index-mcp", version="0.2.1", lifespan=lifespan_manager) # Updated version slightly
 
-@mcp.tool(description="Triggers the indexing process for the project. Can force re-indexing.")
+@mcp.tool(name="trigger_index", description="Triggers the indexing process for the project. Can force re-indexing.")
 async def trigger_index_tool(force_reindex: bool = False) -> dict:
     """
     MCP tool to trigger the indexing or re-indexing of project files.
@@ -54,7 +55,7 @@ async def trigger_index_tool(force_reindex: bool = False) -> dict:
         log.error(f"Error in trigger_index_tool: {e}", exc_info=True)
         return {"content": [{"type": "text", "text": f"Error triggering indexing: {str(e)}"}], "isError": True}
 
-@mcp.tool(description="Gets the current status of the MCP server and indexer.")
+@mcp.tool(name="get_status", description="Gets the current status of the MCP server and indexer.")
 async def get_status_tool() -> dict:
     """
     MCP tool to retrieve the current status of the server and indexer.
@@ -71,7 +72,7 @@ async def get_status_tool() -> dict:
         log.error(f"Error in get_status_tool: {e}", exc_info=True)
         return {"content": [{"type": "text", "text": f"Error getting status: {str(e)}"}], "isError": True}
 
-@mcp.tool(description="Searches the vector index for a given query.")
+@mcp.tool(name="search_index", description="Searches the vector index for a given query.")
 async def search_index_tool(query: str, top_k: int = 5) -> dict:
     """
     MCP tool to perform a search in the vector index.
@@ -83,7 +84,6 @@ async def search_index_tool(query: str, top_k: int = 5) -> dict:
             raise RuntimeError("MCPServer is not initialized.")
         log.info(f"search_index_tool: Performing search for query='{query}', top_k={top_k}")
         results = await mcp_server.perform_search(query_text=query, top_k=top_k)
-        # log.debug(f"Search results: {results}") # Potentially too verbose
         return {"content": [{"type": "text", "text": json.dumps(results)}], "isError": False}
     except Exception as e:
         log.error(f"Error in search_index_tool: {e}", exc_info=True)
@@ -103,8 +103,9 @@ def main():
     project_path = sys.argv[1]
     mcp.cli_project_path = project_path # Save for lifespan manager directly on mcp
     
-    log.info(f"Starting MCP server for project: {project_path}")
+    log.info(f"MCP Main: Project path set to '{project_path}'. About to call mcp.run().")
     mcp.run(transport='stdio')
+    log.info("MCP Main: mcp.run() has exited.") # This line might only be reached on clean shutdown
 
 if __name__ == "__main__":
     main()

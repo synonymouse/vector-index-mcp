@@ -1,10 +1,12 @@
-import os
 import logging
-from typing import List, TypedDict, Optional
+from typing import List, Optional, TypedDict
+
 import lancedb
-import pyarrow as pa
 import numpy as np
 import sentence_transformers
+from lancedb.db import AsyncConnection  # For type hinting
+from lancedb.table import AsyncTable  # For type hinting
+
 from .models import (
     IndexedDocument,
     Settings,
@@ -53,121 +55,210 @@ class Indexer:
         self.settings = settings
         log.info(f"Initializing Indexer with embedding model '{settings.embedding_model_name}' and LanceDB URI '{settings.lancedb_uri}'.")
         self.model: Optional[sentence_transformers.SentenceTransformer] = None
-        self.db: Optional[lancedb.DBConnection] = None
-        self.table: Optional[lancedb.table.Table] = None
-        self.table_name = "documents" # Name of the table in LanceDB
+        self.db: Optional[AsyncConnection] = None
+        self.table: Optional[AsyncTable] = None
+        self.table_name = "documents"  # Name of the table in LanceDB
 
-    async def load_resources(self):
+    async def load_resources(self, recreate_if_exists: bool = False):
         """
-        Asynchronously loads the sentence embedding model and connects to the LanceDB database.
+        Asynchronously loads the sentence embedding model, connects to the LanceDB database,
+        and prepares the table.
         It attempts to open an existing table or creates a new one if not found or incompatible.
 
+        Args:
+            recreate_if_exists: If True, drops and recreates the table if it exists.
+
         Raises:
-            RuntimeError: If the embedding model fails to load or the database connection cannot be established.
+            RuntimeError: If the embedding model fails to load, the database connection
+                          cannot be established, or the table cannot be initialized.
             Exception: Propagates exceptions from underlying libraries during resource loading.
         """
         log.info("Indexer: Starting to load resources (model and database).")
+        self.table = None  # Initialize self.table
 
+        # Load Sentence Transformer Model
         try:
             log.info(f"Indexer: Loading sentence transformer model '{self.settings.embedding_model_name}'...")
+            # Model loading is CPU-bound, consider to_thread if it becomes a bottleneck
+            # For now, direct call as it's usually part of startup.
             self.model = sentence_transformers.SentenceTransformer(
                 self.settings.embedding_model_name
             )
-            # The following log is for deep debugging if model loading behaves unexpectedly.
             log.debug(f"Indexer: Model '{self.settings.embedding_model_name}' loaded. Type: {type(self.model)}.")
-        except BaseException as be: # Catching BaseException for comprehensive error logging, including system exits or memory errors.
+        except BaseException as be:
             log.critical(
                 f"Indexer: CRITICAL FAILURE loading sentence transformer model '{self.settings.embedding_model_name}': {type(be).__name__}: {be}",
                 exc_info=True,
             )
-            self.model = None # Ensure model is None if loading fails.
-            raise # Re-raise to be handled by the calling MCPServer initialization.
-
+            self.model = None
+            raise
         if self.model is None:
-            # This case should ideally not be reached if SentenceTransformer raises an exception on failure.
-            # However, it's a safeguard.
-            err_msg = f"Indexer: SentenceTransformer model '{self.settings.embedding_model_name}' is None after load attempt without a caught BaseException. This indicates an unexpected silent failure during model initialization."
+            err_msg = f"Indexer: SentenceTransformer model '{self.settings.embedding_model_name}' is None after load attempt. This indicates an unexpected silent failure."
             log.critical(err_msg)
             raise RuntimeError(err_msg)
 
+        # Connect to LanceDB
         try:
-            log.info(f"Indexer: Connecting to LanceDB at URI: {self.settings.lancedb_uri}")
-            self.db = lancedb.connect(self.settings.lancedb_uri)
-            log.info(f"Indexer: Successfully connected to LanceDB.")
+            log.info(
+                f"Indexer: Connecting to LanceDB asynchronously at URI: {self.settings.lancedb_uri}"
+            )
+            self.db = await lancedb.connect_async(
+                self.settings.lancedb_uri
+            )
+            log.info(
+                f"Indexer: Successfully connected to LanceDB asynchronously. DB object: {self.db}"
+            )
         except Exception as e:
             log.error(
                 f"Indexer: Failed to connect to LanceDB at '{self.settings.lancedb_uri}': {e}",
                 exc_info=True,
             )
-            raise # Re-raise critical error, to be handled by MCPServer.
+            raise
 
+        # Open or Create Table
         log.info(f"Indexer: Preparing table '{self.table_name}' using schema from 'IndexedDocument' model.")
+        self.table = None
+
+        table_opened_successfully = False
+        table_created_successfully = False
+
         try:
-            # Attempt to open the table first.
-            self.table = self.db.open_table(self.table_name)
-            log.info(f"Indexer: Successfully opened existing LanceDB table '{self.table_name}'.")
-            # TODO: Consider adding schema validation here to ensure the existing table matches IndexedDocument.
-        except (FileNotFoundError, ValueError, pa.lib.ArrowIOError) as e:
-            # FileNotFoundError: Table does not exist.
-            # ValueError: Often indicates schema incompatibility with an existing table.
-            # pa.lib.ArrowIOError: Can occur if the table directory is corrupted or not a valid LanceDB table.
-            log.warning(
-                f"Indexer: Table '{self.table_name}' not found or potentially incompatible ({type(e).__name__}: {e}). Attempting to create/recreate."
-            )
-            try:
-                if isinstance(e, (ValueError, pa.lib.ArrowIOError)): # If schema is incompatible or table is corrupt
-                    try:
-                        self.db.drop_table(self.table_name)
+            if not recreate_if_exists:
+                log.info(f"Attempting to open existing table: {self.table_name}")
+                try:
+                    opened_table = await self.db.open_table(self.table_name)
+                    if opened_table:
+                        self.table = opened_table
                         log.info(
-                            f"Indexer: Dropped existing (potentially incompatible/corrupt) table '{self.table_name}' before recreation."
+                            f"Successfully opened existing table: {self.table_name}. self.table: {self.table}, type: {type(self.table)}"
                         )
-                    except Exception as drop_e:
+                        table_opened_successfully = True
+                    else:
                         log.warning(
-                            f"Indexer: Failed to explicitly drop table '{self.table_name}' during recreation attempt: {drop_e}"
+                            f"db.open_table for '{self.table_name}' returned None/falsey. Will attempt to create."
                         )
-                # Create the table using the Pydantic model schema.
-                self.table = self.db.create_table(
-                    self.table_name, schema=IndexedDocument, mode="create" # 'create' mode fails if table exists
+                except FileNotFoundError:
+                    log.info(
+                        f"Table '{self.table_name}' not found. Will attempt to create."
+                    )
+                except Exception as oe:
+                    log.warning(
+                        f"Error opening table '{self.table_name}': {oe}. Will attempt to create."
+                    )
+
+            if (
+                not table_opened_successfully
+            ):  # Covers not found, error opening, or recreate_if_exists=True
+                log.info(
+                    f"Attempting to create/overwrite table: {self.table_name} with schema {IndexedDocument}"
+                )
+                created_table_obj = await self.db.create_table(
+                    self.table_name, schema=IndexedDocument, mode="overwrite"
                 )
                 log.info(
-                    f"Indexer: Successfully created new LanceDB table '{self.table_name}' using schema from 'IndexedDocument'."
+                    f"db.create_table returned: {created_table_obj}, type: {type(created_table_obj)}"
                 )
-                # It's good practice to create the vector index immediately after table creation if data will be added soon.
-                self.create_vector_index(replace=True) # Create index on the new table
-            except Exception as ce:
-                log.error(
-                    f"Indexer: CRITICAL FAILURE: Could not create or recreate LanceDB table '{self.table_name}': {ce}",
-                    exc_info=True,
-                )
-                raise # This is a fatal error for the indexer's operation.
-        log.info("Indexer: All resources (model and database table) loaded and initialized successfully.")
+                if created_table_obj and isinstance(created_table_obj, AsyncTable):
+                    self.table = created_table_obj
+                    log.info(
+                        f"Successfully created/overwritten and assigned table '{self.table_name}'. self.table: {self.table}"
+                    )
+                    table_created_successfully = True
+                else:
+                    log.error(
+                        f"CRITICAL: Async db.create_table for '{self.table_name}' did not return a valid AsyncTable object. Returned: {created_table_obj}"
+                    )
+                    self.table = None
 
-    def create_vector_index(self, replace: bool = False):
+        except Exception as e:
+            log.exception(
+                f"CRITICAL: Error during table open/create logic for '{self.table_name}'. Error: {e}"
+            )
+            self.table = None
+            raise RuntimeError(
+                f"Fatal error initializing table '{self.table_name}'"
+            ) from e
+
+        # Index creation logic
+        MIN_ROWS_FOR_DEFAULT_INDEX = 256  # Default for IVF_PQ, adjust if necessary
+        if self.table and isinstance(self.table, AsyncTable):
+            if table_opened_successfully and not table_created_successfully:
+                num_rows = await self.table.count_rows()
+                log.info(
+                    f"Table '{self.table_name}' was opened and contains {num_rows} rows."
+                )
+                if num_rows >= MIN_ROWS_FOR_DEFAULT_INDEX:
+                    log.info(
+                        f"Sufficient data ({num_rows} >= {MIN_ROWS_FOR_DEFAULT_INDEX}) for default index creation. Ensuring vector index exists (replace=True)."
+                    )
+                    await self.create_vector_index(table_obj=self.table, replace=True)
+                else:
+                    log.warning(
+                        f"Table '{self.table_name}' has only {num_rows} rows, which is less than the required {MIN_ROWS_FOR_DEFAULT_INDEX} "
+                        f"for default index creation. Index creation will be deferred or a flat index might be considered later."
+                    )
+            elif table_created_successfully:
+                log.info(
+                    f"Table '{self.table_name}' was newly created/overwritten. Vector index creation will be handled upon data addition or explicit trigger."
+                )
+            # If neither, self.table might be None or invalid, which is handled by the else below.
+        else:
+            final_error_msg = f"Indexer critically failed: self.table for '{self.table_name}' is not a valid AsyncTable object after all attempts. self.table: {self.table}."
+            log.error(final_error_msg)
+            raise RuntimeError(final_error_msg)
+
+        log.info(
+            "Indexer: Model and database table loaded and initialized. Vector index creation may be deferred for new or small tables."
+        )
+
+    async def create_vector_index(self, table_obj: AsyncTable, replace: bool = False):
         """
-        Creates a vector search index on the 'vector' column of the table.
+        Creates a vector search index on the 'vector' column of the provided async table object.
 
         Args:
+            table_obj: The LanceDB table object to create the index on.
             replace: If True, replaces an existing index. Defaults to False.
+
+        Raises:
+            RuntimeError: If the table object is invalid or if index creation fails.
         """
-        if not self.table:
-            log.error("Indexer: Cannot create vector index because the table is not initialized.")
-            return
+        if not table_obj:
+            log.error(
+                "Indexer: Cannot create vector index because the provided LanceDB table object is invalid (None)."
+            )
+            raise RuntimeError(
+                "Failed to create vector index: LanceDB table object is not available."
+            )
+
+        table_name_for_log = "unknown_table_passed_to_create_vector_index"
+        try:
+            # Attempt to get table name for logging, handle if it's not directly available or different
+            if hasattr(table_obj, "name"):
+                table_name_for_log = table_obj.name
+        except Exception:
+            pass  # Keep default log name
+
         try:
             log.info(
-                f"Indexer: Attempting to create vector index on table '{self.table_name}' (column 'vector', replace={replace})."
+                f"Indexer: Attempting to create vector index on table '{table_name_for_log}' (column 'vector', replace={replace})."
             )
             # Parameters like num_partitions, num_sub_vectors can be tuned for performance vs. accuracy.
             # Default IVF_PQ index is generally a good starting point.
-            self.table.create_index(vector_column_name="vector", replace=replace)
+            await table_obj.create_index(
+                "vector", replace=replace
+            )  # Pass column name as first arg
             log.info(
-                f"Indexer: Successfully created/verified vector index on table '{self.table_name}'."
+                f"Indexer: Successfully created/verified vector index on table '{table_name_for_log}'."
             )
         except Exception as index_e:
             log.error(
-                f"Indexer: Failed to create vector index on table '{self.table_name}': {index_e}",
+                f"Indexer: Failed to create vector index on table '{table_name_for_log}': {index_e}",
                 exc_info=True,
             )
-            # Depending on the application, this might be a critical error or a recoverable one.
+            # Propagate the error to ensure initialization fails if index creation doesn't succeed.
+            raise RuntimeError(
+                f"Failed to create vector index on table '{table_name_for_log}': {index_e}"
+            ) from index_e
 
     def generate_embedding(self, text: str) -> np.ndarray:
         """
@@ -203,7 +294,7 @@ class Indexer:
             )
             raise # Re-raise to allow caller to handle.
 
-    def add_or_update_document(self, doc: IndexedDocument):
+    async def add_or_update_document(self, doc: IndexedDocument):
         """
         Adds or updates a single document chunk (represented by an IndexedDocument object)
         into the LanceDB table. This involves generating an embedding for the text chunk.
@@ -226,7 +317,7 @@ class Indexer:
             # Pydantic V2 uses model_copy, V1 uses copy. Assuming V1 for .copy()
             doc_with_vector = doc.copy(update={"vector": vector_embedding.tolist()})
 
-            self.table.add([doc_with_vector]) # Add as a list containing the single Pydantic object
+            await self.table.add([doc_with_vector]) # Add as a list containing the single Pydantic object
             log.debug(f"Indexer: Successfully added/updated document chunk ID: {doc.document_id}, file: {doc.file_path}")
         except Exception as e:
             log.error(
@@ -235,7 +326,7 @@ class Indexer:
             )
             # Depending on requirements, might raise this error or log and continue.
 
-    def remove_document(self, file_path: str) -> bool:
+    async def remove_document(self, file_path: str) -> bool:
         """
         Removes all document chunks associated with a given `file_path` from the index.
 
@@ -254,7 +345,7 @@ class Indexer:
             # Ensure file_path is properly quoted if it can contain special characters, though LanceDB might handle this.
             delete_condition = f"file_path = '{file_path}'"
             log.info(f"Indexer: Issuing delete command for document chunks with file_path: '{file_path}' (condition: \"{delete_condition}\")")
-            self.table.delete(delete_condition)
+            await self.table.delete(delete_condition)
             # LanceDB's delete operation typically returns None on success or raises an error.
             # A more robust check might involve querying count before and after if necessary.
             log.info(f"Indexer: Delete command for file_path '{file_path}' completed. Check logs for any LanceDB errors if issues persist.")
@@ -263,7 +354,7 @@ class Indexer:
             log.error(f"Indexer: Error deleting document chunks for file_path '{file_path}': {e}", exc_info=True)
             return False
 
-    def search(self, query_text: str, top_k: int = 5) -> List[SearchResultDict]:
+    async def search(self, query_text: str, top_k: int = 5) -> List[SearchResultDict]:
         """
         Performs a semantic search for documents similar to the `query_text`.
 
@@ -289,9 +380,15 @@ class Indexer:
             query_embedding = self.generate_embedding(query_text)
 
             # Perform the search against the 'vector' column.
-            search_result_builder = self.table.search(query_embedding).limit(top_k)
-            # to_pydantic converts the results into a list of Pydantic model instances.
-            pydantic_results: List[IndexedDocument] = search_result_builder.to_pydantic(IndexedDocument)
+            # self.table.search() is an async method and returns an AsyncVectorQuery object.
+            # .limit() can be chained on the AsyncVectorQuery object.
+            # .to_arrow() is an async method on AsyncVectorQuery that returns a pyarrow.Table.
+            async_search_obj = await self.table.search(query_embedding) # This is an AsyncVectorQuery
+            query_builder = async_search_obj.limit(top_k)
+            arrow_table = await query_builder.to_arrow()
+            dict_results = arrow_table.to_pylist()
+            # Manually convert dicts to Pydantic models
+            pydantic_results: List[IndexedDocument] = [IndexedDocument(**row) for row in dict_results]
 
             # Convert Pydantic models to the SearchResultDict typed dictionary.
             # Exclude 'vector' from the final result as it's large and usually not needed by clients.
@@ -309,7 +406,7 @@ class Indexer:
             # Re-raise as a ValueError to indicate a problem with the search operation itself.
             raise ValueError(f"Search operation failed: {str(e)}")
 
-    def get_indexed_chunk_count(self, project_path: Optional[str] = None) -> int:
+    async def get_indexed_chunk_count(self, project_path: Optional[str] = None) -> int:
         """
         Counts the number of indexed chunks. If `project_path` is provided,
         it counts chunks associated with that specific project path prefix.
@@ -336,12 +433,14 @@ class Indexer:
             log.debug("Indexer: Counting all chunks in the table.")
 
         try:
-            count = self.table.count_rows(filter_clause) # filter_clause can be None for no filter
+            count = await self.table.count_rows(filter_clause) # filter_clause can be None for no filter
             log.info(f"Indexer: Found {count} indexed chunks" + (f" for project path prefix '{project_path}'." if project_path else "."))
             return count
         except Exception as e:
             log.error(
-                f"Indexer: Error counting chunks" + (f" for project path '{project_path}'" if project_path else "") + f": {e}",
+                "Indexer: Error counting chunks"
+                + (f" for project path '{project_path}'" if project_path else "")
+                + f": {e}",
                 exc_info=True,
             )
             return 0 # Return 0 on error to avoid breaking callers expecting an int.
@@ -373,7 +472,6 @@ class Indexer:
                 log.info(f"Indexer: Attempting to delete {count_before} chunks from {log_message_segment} (filter: \"{where_clause}\").")
                 self.table.delete(where_clause) # delete() returns None on success
                 # Verify deletion if possible, or assume success if no exception.
-                # count_after = self.table.count_rows(where_clause)
                 log.info(
                     f"Indexer: Successfully issued delete command for {count_before} chunks from {log_message_segment}."
                 )

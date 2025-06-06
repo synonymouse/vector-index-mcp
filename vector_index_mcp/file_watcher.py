@@ -1,13 +1,14 @@
 import os
 import hashlib
 import logging
+import asyncio # Added for asyncio.run_coroutine_threadsafe
 from pathlib import Path
 import pathspec
 from typing import List, Dict, TypedDict, Optional
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from .indexer import Indexer
+from .indexer import Indexer # Indexer methods are now async
 from .models import IndexedDocument, FileMetadata
 from .content_extractor import chunk_content
 
@@ -28,7 +29,12 @@ class FileWatcher:
     to exclude specified files and directories.
     """
     def __init__(
-        self, project_path: str, indexer: Indexer, ignore_patterns: List[str] = None, abs_lancedb_path_to_ignore: Optional[str] = None
+        self,
+        project_path: str,
+        indexer: Optional[Indexer], # Indexer can be None initially
+        event_loop: Optional[asyncio.AbstractEventLoop], # Added event_loop
+        ignore_patterns: List[str] = None,
+        abs_lancedb_path_to_ignore: Optional[str] = None
     ):
         """
         Initializes the FileWatcher.
@@ -43,15 +49,16 @@ class FileWatcher:
         """
         self.project_path = project_path
         self.project_root = Path(project_path).resolve()
-        self.indexer = indexer
+        self.indexer: Optional[Indexer] = indexer
+        self.event_loop: Optional[asyncio.AbstractEventLoop] = event_loop
         self.abs_lancedb_path_to_ignore = abs_lancedb_path_to_ignore
-        self.known_files: Dict[str, KnownFileInfo] = {} # Stores hash and mtime of processed files
+        self.known_files: Dict[str, KnownFileInfo] = {}
 
         patterns = ignore_patterns or []
         gitignore_path = self.project_root / ".gitignore"
         if gitignore_path.is_file():
             try:
-                with open(gitignore_path, "r", encoding="utf-8") as f: # Specify encoding
+                with open(gitignore_path, "r", encoding="utf-8") as f:
                     patterns.extend(f.read().splitlines())
                 logging.debug(f"Loaded {len(patterns)} patterns from .gitignore at {gitignore_path}")
             except Exception as e:
@@ -92,7 +99,7 @@ class FileWatcher:
         Determines if a given path should be ignored based on .gitignore rules,
         being outside the project root, or being the LanceDB directory itself.
         """
-        real_event_path = os.path.realpath(path) # Canonical path of the event
+        real_event_path = os.path.realpath(path)
 
         # Explicitly ignore the LanceDB directory to prevent self-indexing or loops
         if self.abs_lancedb_path_to_ignore and real_event_path.startswith(self.abs_lancedb_path_to_ignore):
@@ -115,8 +122,6 @@ class FileWatcher:
             # This occurs if absolute_path is not inside self.project_root
             logging.debug(f"Ignoring path '{path}' as it is outside the project root '{self.project_root}'.")
             return True
-        # If not matched by any ignore pattern and within project, don't ignore. (This line was a comment, now implicit)
-        # return False # This was the original return, now handled by is_ignored
 
     def _process_and_index_file(self, file_path: str) -> bool:
         """
@@ -126,9 +131,10 @@ class FileWatcher:
         Returns:
             True if processing was successful (or file was skipped appropriately), False on error.
         """
-        if not self.indexer:
+        if not self.indexer or not self.event_loop:
             logging.warning(
-                f"Indexer not available in FileWatcher. Skipping processing for {file_path}"
+                f"Indexer ({'present' if self.indexer else 'MISSING'}) or event_loop ({'present' if self.event_loop else 'MISSING'}) "
+                f"not available in FileWatcher. Skipping processing for {file_path}"
             )
             return False
         try:
@@ -154,13 +160,15 @@ class FileWatcher:
                     "last_modified": last_modified,
                 }
                 # Ensure any previous index entries for this file are removed if it became empty
-                if self.indexer:
-                    self.indexer.remove_document(file_path)
+                if self.indexer and self.event_loop: # Check event_loop too
+                    future = asyncio.run_coroutine_threadsafe(self.indexer.remove_document(file_path), self.event_loop)
+                    # future.result(timeout=5) # Optional: wait for completion, but can block watcher
+                    logging.debug(f"Scheduled remove_document for empty file {file_path}. Future: {future}")
                 return True # Processed (by acknowledging it's empty)
 
             # Process and index each chunk
             for i, chunk_text in enumerate(chunks):
-                chunk_doc_id = f"{file_path}::{i}" # Unique ID for each chunk
+                chunk_doc_id = f"{file_path}::{i}"
                 document = IndexedDocument(
                     document_id=chunk_doc_id,
                     file_path=file_path, # Store relative or absolute path consistently
@@ -172,8 +180,10 @@ class FileWatcher:
                     metadata=FileMetadata(original_path=file_path),
                     # The 'vector' field is populated by the indexer's add_or_update_document method
                 )
-                if self.indexer:
-                    self.indexer.add_or_update_document(document)
+                if self.indexer and self.event_loop: # Check event_loop too
+                    future = asyncio.run_coroutine_threadsafe(self.indexer.add_or_update_document(document), self.event_loop)
+                    # future.result(timeout=5) # Optional: wait for completion
+                    logging.debug(f"Scheduled add_or_update_document for chunk {document.document_id}. Future: {future}")
 
             # Update known_files state only after successful processing of all chunks
             self.known_files[file_path] = {
@@ -188,8 +198,10 @@ class FileWatcher:
             # If file is gone, ensure it's removed from known_files and index
             if file_path in self.known_files:
                 del self.known_files[file_path]
-            if self.indexer:
-                self.indexer.remove_document(file_path)
+            if self.indexer and self.event_loop: # Check event_loop too
+                future = asyncio.run_coroutine_threadsafe(self.indexer.remove_document(file_path), self.event_loop)
+                # future.result(timeout=5)
+                logging.debug(f"Scheduled remove_document for file not found during processing {file_path}. Future: {future}")
             return False # Indicate processing did not complete for this file
         except Exception as e:
             logging.error(f"Error processing file {file_path}: {e}", exc_info=True)
@@ -202,7 +214,6 @@ class FileWatcher:
         """
         logging.info(f"Starting initial project scan for: {self.project_path}...")
         processed_files_count = 0
-        # os.walk is suitable for iterating through directory trees
         for root, _, files in os.walk(self.project_path, topdown=True):
             # Filter out ignored directories from os.walk itself if possible,
             # though _should_ignore will also catch files within them.
@@ -210,7 +221,7 @@ class FileWatcher:
             for file_name in files:
                 file_path = os.path.join(root, file_name)
                 if self._should_ignore(file_path):
-                    continue # Skip ignored files
+                    continue
                 
                 # Check if file is already known and unchanged to avoid redundant processing
                 known_info = self.known_files.get(file_path)
@@ -265,10 +276,11 @@ class FileWatcher:
         if needs_reindex:
             try:
                 # Remove old version from index before adding new one
-                if self.indexer:
+                if self.indexer and self.event_loop: # Check event_loop too
                     # This ensures that if the number of chunks changes, old ones are gone.
-                    self.indexer.remove_document(file_path)
-                    logging.debug(f"Removed old document chunks for {file_path} before re-indexing.")
+                    future = asyncio.run_coroutine_threadsafe(self.indexer.remove_document(file_path), self.event_loop)
+                    # future.result(timeout=5) # Wait for removal before re-adding
+                    logging.debug(f"Scheduled removal of old document chunks for {file_path} before re-indexing. Future: {future}")
                 else:
                     logging.warning(
                         f"Indexer not available. Cannot remove old chunks for modified file {file_path}."
@@ -285,14 +297,15 @@ class FileWatcher:
         if file_path in self.known_files:
             logging.info(f"File deleted: {file_path}. Removing from index and known files.")
             try:
-                if self.indexer:
-                    self.indexer.remove_document(file_path)
-                    logging.debug(f"Successfully issued remove command to indexer for {file_path}.")
+                if self.indexer and self.event_loop: # Check event_loop too
+                    future = asyncio.run_coroutine_threadsafe(self.indexer.remove_document(file_path), self.event_loop)
+                    # future.result(timeout=5)
+                    logging.debug(f"Scheduled remove_document for deleted file {file_path}. Future: {future}")
                 else:
                     logging.warning(
                         f"Indexer not available. Cannot remove index entries for deleted file {file_path}."
                     )
-                del self.known_files[file_path] # Remove from local state
+                del self.known_files[file_path]
             except Exception as e:
                 logging.error(
                     f"Error removing index entries or from known_files for deleted file {file_path}: {e}", exc_info=True
@@ -315,7 +328,7 @@ class FileWatcher:
         """Stops the file system observer."""
         if self.observer.is_alive():
             self.observer.stop()
-            self.observer.join(timeout=5) # Wait for the observer thread to finish
+            self.observer.join(timeout=5)
             if self.observer.is_alive():
                 logging.warning("File watcher observer thread did not stop cleanly after timeout.")
             else:
@@ -336,13 +349,13 @@ class ProjectEventHandler(FileSystemEventHandler):
         Args:
             file_watcher: The FileWatcher instance that will process the events.
         """
-        super().__init__() # Initialize base class
+        super().__init__()
         self.file_watcher = file_watcher
         logging.debug("ProjectEventHandler initialized.")
 
     def on_created(self, event):
         """Called when a file or directory is created."""
-        super().on_created(event) # Good practice to call super
+        super().on_created(event)
         if not event.is_directory:
             logging.debug(f"Event: created file {event.src_path}")
             self.file_watcher.process_creation(event.src_path)
@@ -366,10 +379,10 @@ class ProjectEventHandler(FileSystemEventHandler):
         super().on_moved(event)
         # A move is treated as a deletion of the source and a creation of the destination.
         logging.debug(f"Event: moved {event.src_path} -> {event.dest_path}")
-        if not event.is_directory: # If a file was moved
+        if not event.is_directory:
             self.file_watcher.process_deletion(event.src_path)
             self.file_watcher.process_creation(event.dest_path)
-        else: # If a directory was moved
+        else:
             # Handling directory moves can be complex. A simple approach is to
             # trigger a re-scan or more granularly process files within.
             # For now, log and rely on individual file events if they are generated,

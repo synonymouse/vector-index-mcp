@@ -27,7 +27,6 @@ dependencies = [
     "pydantic",
     "tiktoken",
     "pathspec",
-    "pandas",
     "mcp[cli]",
 ]
 

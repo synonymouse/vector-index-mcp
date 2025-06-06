@@ -47,17 +47,13 @@ class MCPServer:
         self.abs_lancedb_path = os.path.realpath(os.path.join(self.project_path, lancedb_uri_str))
         log.debug(f"Canonical absolute LanceDB path for watcher ignore: {self.abs_lancedb_path}")
 
-        # effective_ignore_patterns = list(self.settings.ignore_patterns) # This was not used for FileWatcher init
-        
-        # log.debug(f"FileWatcher effective ignore patterns: {effective_ignore_patterns}") # Redundant if FileWatcher logs its own config
-
         self.file_watcher = FileWatcher(
             project_path=self.project_path,
-            indexer=self.indexer, # Will be set after Indexer is initialized
+            indexer=None, # Will be set after Indexer is initialized
+            event_loop=None, # Will be set after event loop is running
             ignore_patterns=list(self.settings.ignore_patterns), # Pass original patterns from settings
             abs_lancedb_path_to_ignore=self.abs_lancedb_path
         )
-        # self.project_path was previously set from settings, now directly from argument.
         self.last_scan_start_time: Optional[float] = None
         self.last_scan_end_time: Optional[float] = None
         self.current_error: Optional[str] = None
@@ -78,11 +74,21 @@ class MCPServer:
             await indexer.load_resources() # Load any async resources for the indexer
 
             self.indexer = indexer
-            self.file_watcher.indexer = self.indexer  # Provide the initialized indexer to the file watcher
+            self.file_watcher.indexer = self.indexer  # Provide the initialized indexer
+            try:
+                self.file_watcher.event_loop = asyncio.get_running_loop() # Provide the running event loop
+                log.debug("MCPServer._initialize_dependencies: Event loop assigned to FileWatcher.")
+            except RuntimeError as e:
+                log.error(f"MCPServer._initialize_dependencies: Could not get running event loop: {e}. FileWatcher may not function correctly for async tasks.", exc_info=True)
+                # Depending on strictness, could raise here or allow FileWatcher to operate in a limited mode / log errors later.
+
+            log.debug("MCPServer._initialize_dependencies: Indexer and FileWatcher configured. About to set status to READY.")
             self.status = ServerStatus.READY
             log.info("MCPServer dependencies initialized successfully. Server is READY.")
+            log.debug("MCPServer._initialize_dependencies: Status set to READY. About to start watcher thread.")
             # _start_watcher_thread is a synchronous method that starts a new thread.
             self._start_watcher_thread()
+            log.debug("MCPServer._initialize_dependencies: Watcher thread start initiated.")
 
         except Exception as e:
             log.critical(f"Fatal error during MCPServer dependency initialization: {e}", exc_info=True)
@@ -130,7 +136,6 @@ class MCPServer:
                 f"Scan requested for '{project_path}', but server is configured for '{self.project_path}'. Request denied."
             )
             self.current_error = f"Scan requested for unsupported path: {project_path}"
-            # self.status = ServerStatus.ERROR # Status should reflect operational capability, not a single bad request.
             raise ValueError(f"Scan requested for unsupported path: {project_path}")
 
         if self.status == ServerStatus.SCANNING:
@@ -190,21 +195,19 @@ class MCPServer:
         indexed_chunk_count = None
         if self.indexer:
             try:
-                # This is a potentially blocking call, run in a thread
-                indexed_chunk_count = await asyncio.to_thread(self.indexer.get_indexed_chunk_count)
+                indexed_chunk_count = await self.indexer.get_indexed_chunk_count()
             except Exception as e:
                 log.error(f"Failed to retrieve indexed chunk count: {e}", exc_info=True)
-                # This error is localized and doesn't mean the whole server is in an error state.
         
         error_message_to_report = None
-        if self.current_error: # Prioritize current operational error
+        if self.current_error:
             error_message_to_report = self.current_error
         elif self.initialization_error: # Fallback to initialization error if present
             error_message_to_report = f"Initialization Error: {str(self.initialization_error)}"
 
         status_payload = {
             "project_path": self.project_path,
-            "status": self.status.name, # Use enum's name for a readable string
+            "status": self.status.name, 
             "last_scan_start_time": self.last_scan_start_time,
             "last_scan_end_time": self.last_scan_end_time,
             "indexed_chunk_count": indexed_chunk_count,
@@ -238,8 +241,8 @@ class MCPServer:
 
         try:
             log.info(f"Performing search for query: '{query_text}', top_k={top_k}")
-            # self.indexer.search is potentially CPU-bound, run in a thread
-            results = await asyncio.to_thread(self.indexer.search, query_text=query_text, top_k=top_k)
+            # self.indexer.search is now an async method
+            results = await self.indexer.search(query_text=query_text, top_k=top_k)
             log.info(f"Search for '{query_text}' returned {len(results)} results.")
             return results
         except Exception as e:
