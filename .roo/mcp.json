@@ -2,7 +2,7 @@
   "mcpServers": {
     "vector-index-mcp": {
       "command": "pipx",
-      "args": ["run", "-vv", "vector-index-mcp", "./"],
+      "args": ["run", "vector-index-mcp", "./"],
       "timeout": 60,
       "env": {}
     }

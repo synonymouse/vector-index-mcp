@@ -69,6 +69,23 @@ Once running, the server provides its functionality via the Model Context Protoc
 
 The server will announce its availability over MCP.
 
+### 4. Editor/IDE Integration (e.g., for Roo)
+
+To connect this MCP server to a compatible editor like Roo, you can configure it in the editor's settings. For Roo, you would create or update the `.roo/mcp.json` file in your project's root with the following configuration. This tells the editor how to launch and communicate with the server.
+
+**`.roo/mcp.json`:**
+```json
+{
+  "mcpServers": {
+    "vector-index-mcp": {
+      "command": "pipx",
+      "args": ["run", "vector-index-mcp", "./"],
+      "timeout": 60,
+      "env": {}
+    }
+  }
+}
+```
 ## Development Setup
 
 If you want to contribute to or modify the server itself:
