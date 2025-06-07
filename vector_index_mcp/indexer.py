@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional, TypedDict
 
@@ -357,39 +358,66 @@ class Indexer:
     async def remove_document(self, file_path: str) -> bool:
         """
         Removes all document chunks associated with a given `file_path` from the index.
+        Includes a retry mechanism for handling concurrent transaction conflicts.
 
         Args:
             file_path: The path of the file whose chunks are to be removed.
 
         Returns:
-            True if the delete operation was successfully issued, False otherwise.
-            Note: LanceDB's delete operation might not return the count of deleted rows directly.
+            True if the delete operation was successful, False otherwise.
         """
         if not self.table:
-            log.warning(
-                "Indexer: Table not initialized. Cannot remove document chunks."
-            )
+            log.warning("Indexer: Table not initialized. Cannot remove document chunks.")
             return False
-        try:
-            # Construct a SQL-like filter condition for the delete operation.
-            # Ensure file_path is properly quoted if it can contain special characters, though LanceDB might handle this.
-            delete_condition = f"file_path = '{file_path}'"
-            log.info(
-                f"Indexer: Issuing delete command for document chunks with file_path: '{file_path}' (condition: \"{delete_condition}\")"
-            )
-            await self.table.delete(delete_condition)
-            # LanceDB's delete operation typically returns None on success or raises an error.
-            # A more robust check might involve querying count before and after if necessary.
-            log.info(
-                f"Indexer: Delete command for file_path '{file_path}' completed. Check logs for any LanceDB errors if issues persist."
-            )
-            return True
-        except Exception as e:
-            log.error(
-                f"Indexer: Error deleting document chunks for file_path '{file_path}': {e}",
-                exc_info=True,
-            )
-            return False
+
+        delete_condition = f"file_path = '{file_path}'"
+        max_retries = 5
+        base_delay = 0.1  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                # The log level is changed to DEBUG to avoid flooding the logs in normal operation.
+                # It's INFO on success.
+                log.debug(
+                    f"Indexer: Attempt {attempt + 1}/{max_retries} to delete chunks for file: '{file_path}'"
+                )
+                await self.table.delete(delete_condition)
+                log.info(
+                    f"Indexer: Successfully deleted document chunks for file_path '{file_path}'."
+                )
+                return True  # Success, exit the function
+            except RuntimeError as e:
+                # Specifically check for the retryable conflict error from LanceDB.
+                if "Retryable commit conflict" in str(e):
+                    if attempt < max_retries - 1:
+                        # Exponential backoff for retries
+                        delay = base_delay * (2**attempt)
+                        log.warning(
+                            f"Indexer: Retryable conflict on attempt {attempt + 1} for '{file_path}'. Retrying in {delay:.2f}s."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        log.error(
+                            f"Indexer: Final attempt failed for '{file_path}' after {max_retries} retries due to persistent conflict.",
+                            exc_info=True,
+                        )
+                        return False
+                else:
+                    log.error(
+                        f"Indexer: Non-retryable RuntimeError deleting document chunks for file_path '{file_path}': {e}",
+                        exc_info=True,
+                    )
+                    return False
+            except Exception as e:
+                log.error(
+                    f"Indexer: Unexpected error deleting document chunks for file_path '{file_path}': {e}",
+                    exc_info=True,
+                )
+                return False  # Exit without retrying
+
+        # This line is reached only if the loop completes without a successful return,
+        # which happens if the last retry fails and the error is logged.
+        return False
 
     async def search(self, query_text: str, top_k: int = 5) -> List[SearchResultDict]:
         """
